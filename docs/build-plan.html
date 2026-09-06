@@ -1,0 +1,904 @@
+<title>IncidentPilot Build Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  --ground:        #F7F8FA;
+  --surface:       #FFFFFF;
+  --sunk:          #EDF0F4;
+  --ink:           #141A22;
+  --ink-2:         #4A5563;
+  --ink-3:         #7C8794;
+  --rule:          #DCE2E9;
+  --rule-strong:   #C3CCD6;
+  --accent:        #B4541A;
+  --accent-ink:    #8E4114;
+  --accent-soft:   #FBF0E7;
+  --critical:      #B62A2A;
+  --critical-soft: #FBEBEB;
+  --high:          #A96A12;
+  --high-soft:     #FBF2E2;
+  --medium:        #5A6572;
+  --medium-soft:   #EEF1F5;
+  --ok:            #1B7355;
+  --ok-soft:       #E6F3EE;
+  --shadow:        0 1px 2px rgba(20,26,34,.05), 0 6px 20px -12px rgba(20,26,34,.18);
+
+  --f-display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --f-body:    "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --measure: 68ch;
+  --rail: 232px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:        #10151C;
+    --surface:       #171E27;
+    --sunk:          #0B1017;
+    --ink:           #E5EAF0;
+    --ink-2:         #9DA9B7;
+    --ink-3:         #6C7784;
+    --rule:          #26303C;
+    --rule-strong:   #35414F;
+    --accent:        #F0913D;
+    --accent-ink:    #F5AC68;
+    --accent-soft:   #2B1D11;
+    --critical:      #F07272;
+    --critical-soft: #2E1618;
+    --high:          #E0AE55;
+    --high-soft:     #2B2113;
+    --medium:        #8A96A4;
+    --medium-soft:   #1C242E;
+    --ok:            #4FBF95;
+    --ok-soft:       #12261F;
+    --shadow:        0 1px 2px rgba(0,0,0,.4), 0 6px 20px -12px rgba(0,0,0,.7);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:        #10151C;
+  --surface:       #171E27;
+  --sunk:          #0B1017;
+  --ink:           #E5EAF0;
+  --ink-2:         #9DA9B7;
+  --ink-3:         #6C7784;
+  --rule:          #26303C;
+  --rule-strong:   #35414F;
+  --accent:        #F0913D;
+  --accent-ink:    #F5AC68;
+  --accent-soft:   #2B1D11;
+  --critical:      #F07272;
+  --critical-soft: #2E1618;
+  --high:          #E0AE55;
+  --high-soft:     #2B2113;
+  --medium:        #8A96A4;
+  --medium-soft:   #1C242E;
+  --ok:            #4FBF95;
+  --ok-soft:       #12261F;
+  --shadow:        0 1px 2px rgba(0,0,0,.4), 0 6px 20px -12px rgba(0,0,0,.7);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px;
+}
+
+code, .mono { font-family: var(--f-mono); font-size: .88em; }
+:not(pre) > code {
+  background: var(--sunk); border: 1px solid var(--rule);
+  padding: .08em .34em; border-radius: 3px; white-space: nowrap;
+}
+
+/* ---------- shell ---------- */
+.shell { max-width: 1180px; margin: 0 auto; padding: 0 24px 96px; }
+
+.masthead {
+  border-bottom: 1px solid var(--rule);
+  padding: 56px 0 32px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+.eyebrow {
+  font-family: var(--f-mono); font-size: 12px; font-weight: 500;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--accent-ink);
+  display: flex; align-items: center; gap: 10px;
+}
+.eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+
+h1 {
+  font-family: var(--f-display); font-weight: 800; font-size: clamp(38px, 6.2vw, 66px);
+  line-height: 1.02; letter-spacing: -.028em; margin: 0; text-wrap: balance;
+}
+.standfirst {
+  font-size: clamp(17px, 2.2vw, 20px); line-height: 1.55; color: var(--ink-2);
+  max-width: 62ch; margin: 0; text-wrap: pretty;
+}
+
+.metabar {
+  display: flex; flex-wrap: wrap; gap: 0;
+  border: 1px solid var(--rule); border-radius: 6px;
+  background: var(--surface); overflow: hidden;
+}
+.metabar > div {
+  flex: 1 1 132px; padding: 14px 18px;
+  border-right: 1px solid var(--rule);
+}
+.metabar > div:last-child { border-right: 0; }
+.metabar dt {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--ink-3); margin: 0 0 3px;
+}
+.metabar dd {
+  margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 22px;
+  letter-spacing: -.01em; font-variant-numeric: tabular-nums;
+}
+
+/* ---------- layout ---------- */
+.layout { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); gap: 56px; padding-top: 44px; }
+@media (max-width: 920px) { .layout { grid-template-columns: 1fr; gap: 0; } }
+
+.rail { position: sticky; top: 24px; align-self: start; max-height: calc(100vh - 48px); overflow-y: auto; }
+@media (max-width: 920px) { .rail { display: none; } }
+.rail h2 {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--ink-3); margin: 0 0 12px; font-weight: 500;
+}
+.rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.rail a {
+  display: block; padding: 5px 0 5px 13px; font-size: 13.5px; line-height: 1.4;
+  color: var(--ink-2); text-decoration: none;
+  border-left: 2px solid var(--rule);
+}
+.rail a:hover { color: var(--ink); border-left-color: var(--rule-strong); }
+.rail a.on { color: var(--accent-ink); border-left-color: var(--accent); font-weight: 500; }
+
+main { min-width: 0; display: flex; flex-direction: column; gap: 60px; }
+
+section > h2 {
+  font-family: var(--f-display); font-weight: 700; font-size: clamp(24px, 3.4vw, 31px);
+  letter-spacing: -.02em; line-height: 1.15; margin: 0 0 6px; text-wrap: balance;
+}
+.dek { color: var(--ink-2); max-width: var(--measure); margin: 0 0 26px; font-size: 15.5px; }
+section p { max-width: var(--measure); }
+h3 {
+  font-family: var(--f-display); font-weight: 700; font-size: 18px; letter-spacing: -.012em;
+  margin: 0 0 8px;
+}
+
+/* ---------- verdict ---------- */
+.verdict {
+  display: grid; grid-template-columns: auto minmax(0,1fr); gap: 0;
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--surface);
+  overflow: hidden; box-shadow: var(--shadow);
+}
+.verdict .flag {
+  background: var(--accent); width: 5px;
+}
+.verdict .body { padding: 22px 26px; }
+.verdict p { margin: 0 0 10px; }
+.verdict p:last-child { margin-bottom: 0; }
+
+/* ---------- state machine strip ---------- */
+.states { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.states li {
+  font-family: var(--f-mono); font-size: 11.5px; padding: 3px 8px; border-radius: 3px;
+  background: var(--sunk); border: 1px solid var(--rule); color: var(--ink-2);
+}
+.states li.terminal {
+  background: var(--medium-soft); border-color: var(--rule-strong);
+  color: var(--ink); font-weight: 500;
+}
+.legend {
+  font-size: 13px; color: var(--ink-3); margin: 10px 0 0; font-family: var(--f-body);
+}
+
+/* ---------- source tiers ---------- */
+.tiers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; counter-reset: tier; }
+.tiers li {
+  display: grid; grid-template-columns: 30px minmax(0,1fr); gap: 14px; align-items: baseline;
+  padding: 11px 14px; border: 1px solid var(--rule); border-radius: 5px; background: var(--surface);
+}
+.tiers li::before {
+  counter-increment: tier; content: counter(tier);
+  font-family: var(--f-mono); font-size: 12px; font-weight: 600; color: var(--accent-ink);
+  border: 1px solid var(--rule-strong); border-radius: 3px; text-align: center; padding: 1px 0;
+}
+.tiers b { font-weight: 600; }
+.tiers span { color: var(--ink-2); font-size: 14.5px; }
+.tiers li:first-child { border-color: var(--accent); }
+
+/* ---------- findings ---------- */
+.findings { display: flex; flex-direction: column; gap: 16px; }
+.finding {
+  display: grid; grid-template-columns: 4px minmax(0,1fr); gap: 0;
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); overflow: hidden;
+}
+.finding .stripe { background: var(--medium); }
+.finding.crit  .stripe { background: var(--critical); }
+.finding.high  .stripe { background: var(--high); }
+.finding .inner { padding: 18px 22px 20px; }
+.finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 9px; }
+.fid {
+  font-family: var(--f-mono); font-size: 12px; font-weight: 600; letter-spacing: .04em;
+  padding: 2px 7px; border-radius: 3px;
+  background: var(--medium-soft); color: var(--ink); border: 1px solid var(--rule-strong);
+}
+.finding.crit .fid { background: var(--critical-soft); color: var(--critical); border-color: var(--critical); }
+.finding.high .fid { background: var(--high-soft); color: var(--high); border-color: var(--high); }
+.sev {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.finding h3 { flex: 1 1 100%; margin: 0; font-size: 17px; }
+.finding p { margin: 0 0 10px; font-size: 15px; }
+.finding p:last-child { margin-bottom: 0; }
+.resolution {
+  margin-top: 12px; padding: 11px 14px; border-radius: 4px;
+  background: var(--accent-soft); border: 1px solid var(--rule);
+  font-size: 14.5px;
+}
+.resolution b { font-family: var(--f-mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent-ink); display: block; margin-bottom: 3px; }
+
+/* ---------- tables ---------- */
+.scroller { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+thead th {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 500; white-space: nowrap;
+  background: var(--sunk); border-bottom: 1px solid var(--rule-strong);
+}
+tbody tr:last-child td { border-bottom: 0; }
+td.id, th.id { font-family: var(--f-mono); font-size: 12.5px; font-weight: 500; white-space: nowrap; color: var(--accent-ink); }
+td.nowrap { white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------- weeks ---------- */
+.weeks { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 14px; }
+.week {
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--surface);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.week-top { padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 9px; flex: 1; }
+.week-n {
+  display: flex; align-items: baseline; gap: 9px;
+}
+.week-n .n {
+  font-family: var(--f-display); font-weight: 800; font-size: 26px; letter-spacing: -.03em;
+  color: var(--accent); line-height: 1; font-variant-numeric: tabular-nums;
+}
+.week-n .t { font-family: var(--f-display); font-weight: 700; font-size: 15.5px; letter-spacing: -.01em; }
+.week p { margin: 0; font-size: 14px; color: var(--ink-2); }
+.week ul { margin: 0; padding-left: 17px; font-size: 13.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 3px; }
+.week ul code { font-size: .92em; }
+.gate {
+  border-top: 1px solid var(--rule); background: var(--sunk);
+  padding: 11px 18px; display: flex; flex-direction: column; gap: 3px;
+}
+.gate .lbl {
+  font-family: var(--f-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.gate .val { font-size: 13.5px; line-height: 1.45; }
+.gate .val b { font-weight: 600; }
+
+/* ---------- decisions ---------- */
+.decisions { display: flex; flex-direction: column; gap: 12px; }
+.decision {
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); padding: 16px 20px;
+}
+.decision.open { border-color: var(--accent); }
+.decision-head { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 7px; }
+.pill {
+  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid var(--rule-strong); color: var(--ink-2);
+  background: var(--medium-soft);
+}
+.pill.needs { background: var(--high-soft); color: var(--high); border-color: var(--high); }
+.pill.set { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); }
+.decision h3 { flex: 1 1 100%; margin: 0; font-size: 16.5px; }
+.decision p { margin: 0 0 9px; font-size: 15px; }
+.decision p:last-child { margin-bottom: 0; }
+
+/* ---------- note ---------- */
+.note {
+  border-left: 3px solid var(--rule-strong); padding: 2px 0 2px 16px;
+  color: var(--ink-2); font-size: 15px; max-width: var(--measure);
+}
+
+footer {
+  margin-top: 76px; padding-top: 22px; border-top: 1px solid var(--rule);
+  color: var(--ink-3); font-size: 13.5px; display: flex; flex-wrap: wrap; gap: 8px 24px;
+}
+footer .mono { color: var(--ink-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+html { scroll-behavior: smooth; }
+section { scroll-margin-top: 20px; }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <div class="eyebrow">Derived from Implementation Plan Rev&nbsp;2 · 6 September 2026</div>
+    <h1>IncidentPilot Build Plan</h1>
+    <p class="standfirst">Rev&nbsp;2 decides what to build and why. This is the execution layer — every file, in what
+      order, with what contract, guarded by which test, gated by which binary acceptance criterion.
+      Plus the fifteen places the source material contradicts itself or does not run.</p>
+
+    <dl class="metabar">
+      <div><dt>Plan</dt><dd class="num">2,432 <span style="font-size:13px;font-weight:400;color:var(--ink-3)">lines</span></dd></div>
+      <div><dt>Tasks</dt><dd class="num">144</dd></div>
+      <div><dt>Schedule</dt><dd class="num">8 <span style="font-size:13px;font-weight:400;color:var(--ink-3)">weeks</span></dd></div>
+      <div><dt>Findings</dt><dd class="num">15</dd></div>
+      <div><dt>Invariants</dt><dd class="num">12</dd></div>
+      <div><dt>Code today</dt><dd class="num">0</dd></div>
+    </dl>
+  </header>
+
+  <div class="layout">
+
+    <nav class="rail" aria-label="Contents">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#audit">Codebase audit</a></li>
+        <li><a href="#sources">Source hierarchy</a></li>
+        <li><a href="#findings">The 15 findings</a></li>
+        <li><a href="#conflicts">Remaining conflicts</a></li>
+        <li><a href="#invariants">Twelve invariants</a></li>
+        <li><a href="#weeks">Eight weeks</a></li>
+        <li><a href="#trace">Traceability</a></li>
+        <li><a href="#decisions">Open decisions</a></li>
+      </ol>
+    </nav>
+
+    <main>
+
+      <!-- ============ AUDIT ============ -->
+      <section id="audit">
+        <h2>Codebase audit</h2>
+        <p class="dek">What exists in the repository today, audited on 6 September 2026.</p>
+
+        <div class="verdict">
+          <div class="flag"></div>
+          <div class="body">
+            <p><b>Nothing is implemented.</b> The repository is two plan documents, eight <code>.skill</code>
+              archives, and two reference files. No <code>bot/</code>, no migrations, no tests, no
+              <code>docker-compose.yml</code>, no CI workflows. Every artifact in the plan is net-new.</p>
+            <p>That is good news for one specific reason: the <code>domain/</code>-purity boundary that makes
+              the replay harness possible can be established in week&nbsp;1 rather than retrofitted in week&nbsp;7,
+              when it would cost more than the harness is worth.</p>
+          </div>
+        </div>
+
+        <h3 style="margin-top:30px">What gets built — the 13-state incident lifecycle</h3>
+        <ul class="states">
+          <li>detected</li><li>triaging</li><li>engaged</li><li>acknowledged</li><li>mitigating</li>
+          <li>mitigated</li><li>resolved</li><li>reopened</li><li>pir_drafting</li><li>pir_drafted</li>
+          <li>pir_failed</li><li class="terminal">closed</li><li class="terminal">merged</li>
+          <li class="terminal">false_positive</li><li class="terminal">abandoned</li>
+        </ul>
+        <p class="legend">Bordered states are terminal. The transition table exists twice — as a Python dict that
+          catches programmer error at development time, and as <code>UNIQUE (incident_id, seq)</code> that catches
+          concurrency error at 3&nbsp;a.m.</p>
+      </section>
+
+      <!-- ============ SOURCES ============ -->
+      <section id="sources">
+        <h2>Source hierarchy</h2>
+        <p class="dek">Applied consistently throughout the plan. Where two sources disagree, the higher tier wins
+          and the resolution is recorded.</p>
+        <ol class="tiers">
+          <li><b>Implementation Plan Rev&nbsp;2</b><span> — primary. Architecture, defect fixes, version pins, differentiators.</span></li>
+          <li><b>The eight project skills</b><span> — binding as project rules. Their “Critical rules” become invariants; their “Definition of done” become acceptance criteria.</span></li>
+          <li><b>Starter code reference</b><span> — the reference implementation. Where it and Rev&nbsp;2 show the same function differently, it wins; every case is logged.</span></li>
+          <li><b>Schema and eval-harness references</b><span> — authoritative for the data layer and the eval harness, superseding the abbreviated versions in Rev&nbsp;2.</span></li>
+          <li><b>Rev&nbsp;1</b><span> — last resort, only for content Rev&nbsp;2 references but never enumerates. Used exactly once, for the runbook catalogue, and labelled as such.</span></li>
+        </ol>
+      </section>
+
+      <!-- ============ FINDINGS ============ -->
+      <section id="findings">
+        <h2>The findings that matter</h2>
+        <p class="dek">Reading Rev&nbsp;2, the starter code and the two reference files against each other surfaced
+          eleven disagreements and four places where a source is wrong on its own terms. These seven are the ones
+          that would have cost real time or shipped a silent bug.</p>
+
+        <div class="findings">
+
+          <article class="finding crit">
+            <div class="stripe"></div>
+            <div class="inner">
+              <div class="finding-head">
+                <span class="fid">C-05</span><span class="sev">Critical · silent failure</span>
+                <h3>The skeleton PIR is generated, persisted — and never posted</h3>
+              </div>
+              <p>Rev&nbsp;2’s <code>EFFECTS</code> table omits <code>(PIR_FAILED → PIR_DRAFTED)</code>, which the
+                starter code maps to <code>post_pir_skeleton</code>. Without it that transition fires no outbox
+                event, so the incident reaches <code>pir_drafted</code> with nothing visible in the channel.</p>
+              <p>This is the highest-consequence conflict in the set because it breaks the week&nbsp;6 acceptance
+                gate — “skeleton posted within 90&nbsp;s” — while every unit test still passes.</p>
+              <div class="resolution"><b>Resolution</b>Use the starter code’s <code>EFFECTS</code> table verbatim,
+                including <code>post_merge_notice</code> on the merge edge.</div>
+            </div>
+          </article>
+
+          <article class="finding crit">
+            <div class="stripe"></div>
+            <div class="inner">
+              <div class="finding-head">
+                <span class="fid">X-01</span><span class="sev">Critical · does not run</span>
+                <h3>The dead-step analytics query is not valid SQL</h3>
+              </div>
+              <p><code>Q5</code> in the schema reference has three independent errors: <code>unnest()</code> appears
+                both in the select list and as a <code>CROSS JOIN LATERAL</code>, producing a cross product; the
+                <code>FILTER</code> clause references a different expansion than the one it groups by; and the outer
+                query aliases <code>runbooks</code> as <code>r</code> while the subquery already exposes
+                <code>r.name</code>.</p>
+              <p>It is the input to differentiator D4’s runbook-efficacy loop, so shipping it means that loop
+                silently produces nothing.</p>
+              <div class="resolution"><b>Resolution</b>Corrected query committed in the plan as task
+                <code>W5-14</code>, with <code>test_dead_step_query_runs</code> executing it against a seeded
+                Testcontainer.</div>
+            </div>
+          </article>
+
+          <article class="finding high">
+            <div class="stripe"></div>
+            <div class="inner">
+              <div class="finding-head">
+                <span class="fid">C-03</span><span class="sev">High · non-determinism</span>
+                <h3>First-match correlation makes storm outcomes depend on sort order</h3>
+              </div>
+              <p>Rev&nbsp;2’s <code>correlate()</code> returns on the first incident clearing the 0.62 threshold;
+                the starter code returns the best-scoring match. During a storm several open incidents clear the bar
+                at once, so first-match ties the merge target to the database sort order of
+                <code>open_incidents</code>.</p>
+              <p>That is exactly the run-to-run variance the replay harness exists to exclude. Rev&nbsp;2’s version
+                also drops the severity guard its own prose promises — a Sev1 could be absorbed into a Sev3.</p>
+              <div class="resolution"><b>Resolution</b>Best-match wins, severity guard retained,
+                <code>cfg</code> passed as a parameter rather than imported — which is also what makes the eval
+                harness’s counterfactual mode possible.</div>
+            </div>
+          </article>
+
+          <article class="finding high">
+            <div class="stripe"></div>
+            <div class="inner">
+              <div class="finding-head">
+                <span class="fid">X-03</span><span class="sev">High · missing implementation</span>
+                <h3><code>dedup_epoch</code> is central to idempotency and nothing writes it</h3>
+              </div>
+              <p>Rev&nbsp;2 and the ingest skill both explain that the epoch increments when an incident closes so
+                the same alert can recur next week, and <code>UNIQUE (dedup_key, dedup_epoch)</code> depends on it.
+                No source contains the code that increments it, or says where the next epoch is read from.</p>
+              <div class="resolution"><b>Resolution</b>Derive it, never store it globally: try the open-incident
+                lookup first, then insert with <code>COALESCE((SELECT max(dedup_epoch)+1 …), 0)</code> inside the
+                transaction already holding the advisory lock. If two workers still race, the unique constraint
+                remains the arbiter.</div>
+            </div>
+          </article>
+
+          <article class="finding high">
+            <div class="stripe"></div>
+            <div class="inner">
+              <div class="finding-head">
+                <span class="fid">C-02</span><span class="sev">High · breaks the demo</span>
+                <h3>The compose file aborts on the very clone it promises will work</h3>
+              </div>
+              <p>Rev&nbsp;2 §13.2 sets <code>IP_SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:?set in .env}</code>.
+                The <code>:?</code> operator makes Compose abort when the variable is unset — while the paragraph
+                directly below promises an interviewer can clone and run the full demo without credentials.</p>
+              <p>A fake <em>LLM</em> provider alone is also not enough: channel creation still calls a Slack API
+                that will reject the token. Rev&nbsp;2 never mentions the chat provider.</p>
+              <div class="resolution"><b>Resolution</b>Default the Slack variables with <code>:-</code> and add
+                <code>IP_CHAT_PROVIDER=fake</code>, so a clean clone with no <code>.env</code> runs the storm,
+                the war room and the PIR end to end.</div>
+            </div>
+          </article>
+
+          <article class="finding high">
+            <div class="stripe"></div>
+            <div class="inner">
+              <div class="finding-head">
+                <span class="fid">X-04</span><span class="sev">High · arithmetic</span>
+                <h3>The TimescaleDB justification assumes a resolution Prometheus does not produce</h3>
+              </div>
+              <p>Rev&nbsp;2 justifies the hypertable on “20 series × 1-second resolution × 60 minutes = 72,000 rows
+                per incident.” Prometheus scrapes at 15&nbsp;s by default, so one-second resolution does not exist
+                in the source data — a <code>step=1s</code> range query returns an interpolated staircase. The real
+                figure is roughly 4,800 rows per incident.</p>
+              <p>This is the <em>second</em> correction to the same number; Rev&nbsp;2 already corrected it once.</p>
+              <div class="resolution"><b>Resolution</b>Keep the conclusion, fix the reasoning. What survives is
+                declarative retention and compression replacing ~150 lines of cron and partition maintenance, plus
+                <code>time_bucket_gapfill()</code> for the incident chart. The decision doc records both
+                corrections — consistent with Rev&nbsp;2’s own principle that a decision document hiding its
+                revisions is worthless.</div>
+            </div>
+          </article>
+
+          <article class="finding">
+            <div class="stripe"></div>
+            <div class="inner">
+              <div class="finding-head">
+                <span class="fid">X-02</span><span class="sev">Medium · lost evidence</span>
+                <h3>The alerts table cannot record that an alert re-fired</h3>
+              </div>
+              <p><code>UNIQUE (fingerprint, starts_at)</code> is the correct idempotency guard, but Alertmanager
+                re-sends a firing alert every <code>repeat_interval</code> with the <em>same</em>
+                <code>startsAt</code> — that field is when the alert began, not when it was sent. So the retry is a
+                silent no-op and <code>received_at</code> holds the first receipt forever.</p>
+              <div class="resolution"><b>Resolution</b>Keep the constraint; add <code>last_seen_at</code> and
+                <code>seen_count</code> updated via <code>ON CONFLICT … DO UPDATE</code>. Two columns turn a silent
+                no-op into evidence, and “Alertmanager re-sent this four times before we mitigated” is a real PIR
+                sentence.</div>
+            </div>
+          </article>
+
+        </div>
+      </section>
+
+      <!-- ============ REMAINING CONFLICTS ============ -->
+      <section id="conflicts">
+        <h2>The remaining conflicts</h2>
+        <p class="dek">Lower consequence, but each would have cost an hour to discover mid-build.</p>
+        <div class="scroller">
+          <table>
+            <thead>
+              <tr><th class="id">ID</th><th>Disagreement</th><th>Resolution</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="id">C-01</td>
+                <td>Slack signing secret required in Rev&nbsp;2, optional in the starter code</td>
+                <td>Optional, with a startup check that enforces presence only when <code>environment != "dev"</code></td>
+              </tr>
+              <tr>
+                <td class="id">C-04</td>
+                <td><code>fatigue_score()</code> takes a clock in Rev&nbsp;2, is pure in the starter code</td>
+                <td>Pure. A clock inside <code>domain/</code> is the first cause of flaky replay; the window is built by SQL</td>
+              </tr>
+              <tr>
+                <td class="id">C-06</td>
+                <td><code>page_events</code> time column is <code>paged_at</code> vs <code>time</code></td>
+                <td><code>time</code> — it is a hypertable; Rev&nbsp;2’s query would fail outright</td>
+              </tr>
+              <tr>
+                <td class="id">C-07</td>
+                <td>Runbook efficacy query reads columns the table does not have</td>
+                <td>Use the reference’s <code>LEFT JOIN LATERAL</code> form; Rev&nbsp;2’s is a leftover table shape</td>
+              </tr>
+              <tr>
+                <td class="id">C-08</td>
+                <td>Cost aggregate uses a TimescaleDB Toolkit function not in core</td>
+                <td>Plain <code>avg()</code> committed; Toolkit p95 in a separate, guarded aggregate</td>
+              </tr>
+              <tr>
+                <td class="id">C-09</td>
+                <td><code>incidents</code> references <code>runbooks(id)</code> before that table is defined</td>
+                <td>Follow the reference’s migration order — reference tables first</td>
+              </tr>
+              <tr>
+                <td class="id">C-10</td>
+                <td>The intent ladder’s layers 2–3 are specified but have no module</td>
+                <td>Layer 1 stays pure in <code>domain/</code>; the impure layers move to <code>transcript/classifier.py</code></td>
+              </tr>
+              <tr>
+                <td class="id">C-11</td>
+                <td><code>storm_threshold</code> is configured and never consumed</td>
+                <td>It gates the storm banner and metric — without which the demo’s defining moment has no visible output</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============ INVARIANTS ============ -->
+      <section id="invariants">
+        <h2>The twelve invariants</h2>
+        <p class="dek">Distilled from the eight skills’ “Critical rules”. Each has a test that fails the build,
+          listed in the order an interviewer would discover a violation.</p>
+        <div class="scroller">
+          <table>
+            <thead><tr><th class="id">ID</th><th>Invariant</th><th>Enforced by</th></tr></thead>
+            <tbody>
+              <tr><td class="id">INV-01</td><td><code>domain/</code> is pure — no I/O, clock, randomness or outside imports</td><td>AST import scan in CI</td></tr>
+              <tr><td class="id">INV-02</td><td>Slack history is never called outside the reconciler</td><td>Call-count assertion; the fake adapter raises</td></tr>
+              <tr><td class="id">INV-03</td><td>Every external write goes through the outbox relay</td><td>Import-graph assertion</td></tr>
+              <tr><td class="id">INV-04</td><td>Dedup identity lives in a Postgres constraint, never a cache key</td><td>Survives a cache flush</td></tr>
+              <tr><td class="id">INV-05</td><td>An uncited claim is unrepresentable in the schema</td><td><code>min_length=1</code> + parse test</td></tr>
+              <tr><td class="id">INV-06</td><td>PIR numbers are computed from PromQL, never generated</td><td>Ungrounded-number rejection</td></tr>
+              <tr><td class="id">INV-07</td><td>No vendor or model string outside <code>config/</code></td><td>CI grep job</td></tr>
+              <tr><td class="id">INV-08</td><td>Every timestamp is <code>TIMESTAMPTZ</code>, stored UTC</td><td><code>information_schema</code> query</td></tr>
+              <tr><td class="id">INV-09</td><td>Compression segments by the low-cardinality column</td><td>Ratio ≥ 8× on seeded data</td></tr>
+              <tr><td class="id">INV-10</td><td>Replay performs zero network calls</td><td>Socket guard around the run</td></tr>
+              <tr><td class="id">INV-11</td><td>The “platform is down” alert does not route through the platform</td><td>Alertmanager route test</td></tr>
+              <tr><td class="id">INV-12</td><td>Degradation is announced, never silent</td><td>Banner + gauge assertion</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note" style="margin-top:18px">INV-01 is the one that cannot be added later without a rewrite,
+          which is why its test ships in week&nbsp;1 — before there is anything to be lazy about. Everything
+          downstream (replay, counterfactuals, the nine-second corpus run) is a consequence of it.</p>
+      </section>
+
+      <!-- ============ WEEKS ============ -->
+      <section id="weeks">
+        <h2>Eight weeks, eight binary gates</h2>
+        <p class="dek">A red gate stops the week. That is the point of having them — and “I cut scope when week 6’s
+          gate went red” is a better answer than a plan that never slipped.</p>
+
+        <div class="weeks">
+
+          <article class="week">
+            <div class="week-top">
+              <div class="week-n"><span class="n">1</span><span class="t">Ingest &amp; trust boundary</span></div>
+              <p>A webhook a stranger cannot forge, returning 202 fast, onto a durable stream. 20 tasks.</p>
+              <ul>
+                <li>Three trust models — only Slack and the pager can sign</li>
+                <li><code>domain/</code> purity test, before the code it guards</li>
+                <li>The 15 Prometheus metrics; SLOs written first</li>
+              </ul>
+            </div>
+            <div class="gate"><span class="lbl">Gate G1</span><span class="val">Bad bearer → <b>401</b>; good → <b>202 at p99 &lt; 250 ms</b> over 100 requests; entry visible on the stream</span></div>
+          </article>
+
+          <article class="week">
+            <div class="week-top">
+              <div class="week-n"><span class="n">2</span><span class="t">Correlation &amp; state machine</span></div>
+              <p>Forty alerts become one incident. Thirteen states, enforced twice. 15 tasks.</p>
+              <ul>
+                <li>Full schema; <code>alembic upgrade head</code> from empty</li>
+                <li>Best-match correlation with the severity guard</li>
+                <li>Root signal = first alert on the deepest dependency</li>
+              </ul>
+            </div>
+            <div class="gate"><span class="lbl">Gate G2</span><span class="val">40-alert storm → <b>exactly one</b> incident, 39 attached, one root signal; every invalid transition raises</span></div>
+          </article>
+
+          <article class="week">
+            <div class="week-top">
+              <div class="week-n"><span class="n">3</span><span class="t">Slack orchestration &amp; outbox</span></div>
+              <p>The best demo of idempotency in the project. 16 tasks.</p>
+              <ul>
+                <li>Transactional outbox; the relay is the only external writer</li>
+                <li>Twelve crash points, injected and tested</li>
+                <li>Priority lanes — shed the decorative, never the critical</li>
+              </ul>
+            </div>
+            <div class="gate"><span class="lbl">Gate G3</span><span class="val">Kill the worker mid-orchestration, restart → <b>no duplicate channel</b>, 12/12 crash points</span></div>
+          </article>
+
+          <article class="week">
+            <div class="week-top">
+              <div class="week-n"><span class="n">4</span><span class="t">Event-sourced transcript</span></div>
+              <p>Slack becomes a write path, not a read path. 13 tasks.</p>
+              <ul>
+                <li>Every message persisted as it arrives</li>
+                <li>Edits appended as revisions, never applied in place</li>
+                <li>The reconciler is the sole history caller, 1/min</li>
+              </ul>
+            </div>
+            <div class="gate"><span class="lbl">Gate G4</span><span class="val">200 messages → <b>200 rows</b>, zero duplicates, <b>zero</b> history calls</span></div>
+          </article>
+
+          <article class="week">
+            <div class="week-top">
+              <div class="week-n"><span class="n">5</span><span class="t">Responders &amp; runbooks</span></div>
+              <p>The right human, aware of how much they have already been paged. 17 tasks.</p>
+              <ul>
+                <li>Fatigue scoring; never a silent reroute</li>
+                <li>Eight runbooks with parseable step IDs</li>
+                <li>Runbook matched to the root signal, not the loudest alert</li>
+              </ul>
+            </div>
+            <div class="gate"><span class="lbl">Gate G5</span><span class="val">Pager unreachable → cache → static rota → team channel, <b>each announced</b>. Silent failure fails the gate</span></div>
+          </article>
+
+          <article class="week">
+            <div class="week-top">
+              <div class="week-n"><span class="n">6</span><span class="t">Impact &amp; the grounded PIR</span></div>
+              <p>The flagship. Impact is computed before any model call. 23 tasks.</p>
+              <ul>
+                <li>Six citation kinds with a stable ID grammar</li>
+                <li>Deterministic validator — no model in the gate</li>
+                <li>Root cause nullable; “unknown” is a valid answer</li>
+              </ul>
+            </div>
+            <div class="gate"><span class="lbl">Gate G6</span><span class="val">Provider blocked → <b>skeleton in 90 s</b>. Unblocked → full PIR, <b>zero uncited claims</b></span></div>
+          </article>
+
+          <article class="week">
+            <div class="week-top">
+              <div class="week-n"><span class="n">7</span><span class="t">Replay harness &amp; eval gate</span></div>
+              <p>The crown jewel — nothing in the OSS incident field has this. 22 tasks.</p>
+              <ul>
+                <li>40 incidents, 11 buckets, adversarial fixtures included</li>
+                <li>Hard gates deterministic; judge agreement reported</li>
+                <li>Lifeboat: separate image, no shared dependencies</li>
+              </ul>
+            </div>
+            <div class="gate"><span class="lbl">Gate G7</span><span class="val">A one-word prompt change turns CI <b>red</b> and blocks the PR. Screenshot it</span></div>
+          </article>
+
+          <article class="week">
+            <div class="week-top">
+              <div class="week-n"><span class="n">8</span><span class="t">Dashboard, deploy, polish</span></div>
+              <p>Runs for a stranger, from a clean clone, with no API key. 18 tasks.</p>
+              <ul>
+                <li>Server Components by default; citation chips resolve</li>
+                <li>Helm chart with no <code>secrets.yaml</code>, ever</li>
+                <li>Signed images, atomic deploy, smoke test, rollback</li>
+              </ul>
+            </div>
+            <div class="gate"><span class="lbl">Gate G8</span><span class="val">Clean clone, no <code>.env</code>, full demo <b>three times consecutively</b>, no manual intervention</span></div>
+          </article>
+
+        </div>
+
+        <p class="note" style="margin-top:22px">Cut order if week&nbsp;8 arrives with work outstanding: dashboard
+          analytics pages → runbooks 7–8 → fatigue routing → <b>never</b> the eval harness or the citation
+          validator.</p>
+      </section>
+
+      <!-- ============ TRACEABILITY ============ -->
+      <section id="trace">
+        <h2>Traceability</h2>
+        <p class="dek">Every Rev&nbsp;2 defect and differentiator maps to a file, a test and a week — so a reviewer
+          can walk backwards from any line of code to the decision that justified it.</p>
+
+        <h3 style="margin-top:8px">Differentiators</h3>
+        <div class="scroller">
+          <table>
+            <thead><tr><th class="id">ID</th><th>Differentiator</th><th>Acceptance criterion</th><th class="nowrap">Week</th></tr></thead>
+            <tbody>
+              <tr><td class="id">D1</td><td>Evidence-anchored PIR</td><td>Coverage 1.000 on every published PIR; a fabricated ID rejects, retries, then degrades — no partial publication</td><td class="nowrap num">6</td></tr>
+              <tr><td class="id">D2</td><td>Incident replay + eval gate</td><td>Under 30 s, zero network calls; one word of prompt turns CI red</td><td class="nowrap num">7</td></tr>
+              <tr><td class="id">D3</td><td>Alert-storm compression</td><td>40 alerts → 1 incident; every merge posts its score and reasons</td><td class="nowrap num">2</td></tr>
+              <tr><td class="id">D4</td><td>Closed-loop runbook efficacy</td><td>Step signals from three sources, deduped; corrected dead-step query runs</td><td class="nowrap num">5</td></tr>
+              <tr><td class="id">D5</td><td>Fatigue-aware routing</td><td>Above 0.75 pages the secondary <em>and</em> notifies the primary with an opt-in — never silent</td><td class="nowrap num">5</td></tr>
+              <tr><td class="id">D6</td><td>PII redaction boundary</td><td>Round-trip lossless; CI fails if a raw email reaches a provider adapter</td><td class="nowrap num">6</td></tr>
+              <tr><td class="id">D7</td><td>Brownout + lifeboat</td><td>Four levels inducible and announced; lifeboat posts in 120 s from an image sharing no code</td><td class="nowrap num">7</td></tr>
+              <tr><td class="id">D8</td><td>Organizational learning</td><td>Repeat detection surfaces “similar to #204, action item still open” in-channel</td><td class="nowrap num">8</td></tr>
+              <tr><td class="id">D9</td><td>Portfolio integration</td><td>Dependency graph loads from TraceMap <em>or</em> the checked-in YAML — the project stands alone</td><td class="nowrap num">2/6</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style="margin-top:28px">Rev 2 defects, and what guards each fix</h3>
+        <div class="scroller">
+          <table>
+            <thead><tr><th class="id">ID</th><th>Defect</th><th>Guarded by</th><th class="nowrap">Week</th></tr></thead>
+            <tbody>
+              <tr><td class="id">B-01</td><td>PIR fetches the Slack thread at resolve time</td><td>Zero-history-call assertion; the fake adapter raises</td><td class="nowrap num">4</td></tr>
+              <tr><td class="id">B-02</td><td>Claims signature validation on Alertmanager, which does not sign</td><td>Per-source verifier tests</td><td class="nowrap num">1</td></tr>
+              <tr><td class="id">B-03</td><td>One alert storm → 40 Slack channels</td><td>Storm compression fixture</td><td class="nowrap num">2</td></tr>
+              <tr><td class="id">B-04</td><td>TimescaleDB volume arithmetic wrong</td><td>Decision doc — plus a second correction (X-04)</td><td class="nowrap num">2</td></tr>
+              <tr><td class="id">B-05</td><td>Compression segments by the highest-cardinality column</td><td>Ratio ≥ 8× on seeded data</td><td class="nowrap num">2</td></tr>
+              <tr><td class="id">B-06</td><td>Naked <code>TIMESTAMP</code> in a timeline product</td><td>Schema query returning zero rows</td><td class="nowrap num">2</td></tr>
+              <tr><td class="id">B-07</td><td>Cache-based dedup loses work on worker crash</td><td>Dedup survives a cache flush</td><td class="nowrap num">2</td></tr>
+              <tr><td class="id">B-08</td><td>No outbox — orphaned channels guaranteed</td><td>Twelve crash points</td><td class="nowrap num">3</td></tr>
+              <tr><td class="id">B-09</td><td>Gating on self-reported model confidence</td><td>Fabricated-citation rejection</td><td class="nowrap num">6</td></tr>
+              <tr><td class="id">B-10</td><td>Business impact numbers generated by the model</td><td>Ungrounded-number rejection; impact absent from the schema</td><td class="nowrap num">6</td></tr>
+              <tr><td class="id">B-11</td><td>The CI prompt gate never actually ran</td><td>Path filter; the gate must go red on a prompt edit</td><td class="nowrap num">7</td></tr>
+              <tr><td class="id">B-12</td><td>Slack rate-limit tiers described backwards</td><td>Priority-lane shedding test</td><td class="nowrap num">3</td></tr>
+              <tr><td class="id">B-13</td><td>State machine with no escape hatches</td><td>Property test over random transition paths</td><td class="nowrap num">2</td></tr>
+              <tr><td class="id">B-14</td><td>Version drift, floating tags, no lockfile</td><td>Frozen sync in CI; no <code>latest</code> anywhere</td><td class="nowrap num">1</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============ DECISIONS ============ -->
+      <section id="decisions">
+        <h2>Open decisions</h2>
+        <p class="dek">Four calls the plan could not make on your behalf. Three have a default applied so nothing is
+          blocked; one needs an answer before week&nbsp;6.</p>
+
+        <div class="decisions">
+
+          <article class="decision open">
+            <div class="decision-head">
+              <span class="fid">E-1</span><span class="pill needs">Needs an answer · before week 6</span>
+              <h3>The <code>synthesize</code> model default</h3>
+            </div>
+            <p>Rev&nbsp;2 flags that a current-generation small model now sits roughly 4× below the committed
+              default, and deliberately did not change your portfolio baseline. The plan follows that — GPT-5.4-mini
+              ships as the default for consistency with your other capstones.</p>
+            <p>The mechanism to settle it is built in week&nbsp;7, and this is the best possible use of it: replay
+              the corpus with <code>--set roles.synthesize.model=&lt;candidate&gt;</code>, compare quality and cost
+              against the committed baseline, and promote whichever wins on your own golden set. That turns a
+              price-list argument into an evidence-backed decision — which is the interview story.</p>
+          </article>
+
+          <article class="decision">
+            <div class="decision-head">
+              <span class="fid">E-2</span><span class="pill set">Default applied</span>
+              <h3>Prometheus scrape interval for the demo cluster</h3>
+            </div>
+            <p>15&nbsp;s scrape with a matching sampler step, and the corrected arithmetic recorded honestly. A
+              5&nbsp;s interval would restore the larger row count at the cost of a non-default config you would
+              have to explain. Recommendation: keep 15&nbsp;s and keep the correction — a second self-caught
+              arithmetic error is a better answer to “what did you get wrong” than a bigger number.</p>
+          </article>
+
+          <article class="decision">
+            <div class="decision-head">
+              <span class="fid">E-3</span><span class="pill set">Default applied</span>
+              <h3>D4’s auto-PR job — ship or defer?</h3>
+            </div>
+            <p>Deferred to post-MVP. The query filters on five uses per runbook, and you will not have five
+              incidents per runbook inside eight weeks, so the job would run and produce nothing. Build the signal
+              capture and the corrected query in week&nbsp;5 — that is what the interview answer actually describes
+              — and say the loop has not closed yet. Claiming a closed loop that has never closed is exactly what a
+              follow-up question exposes.</p>
+          </article>
+
+          <article class="decision">
+            <div class="decision-head">
+              <span class="fid">E-4</span><span class="pill set">Default applied</span>
+              <h3>Portfolio-wide version sweep</h3>
+            </div>
+            <p>This plan pins slack-bolt 1.30.0 and Alertmanager 0.34.0, both newer than the HealOps and ChaosProof
+              pins. If you bump Alertmanager in one project, bump it in all three — 0.34.0 splits two values out of
+              the <code>reason</code> label, and any dashboard panel matching the old value will silently
+              under-count.</p>
+          </article>
+
+        </div>
+      </section>
+
+      <footer>
+        <span>Derived from IncidentPilot Implementation Plan Rev&nbsp;2, eight project skills, and the starter-code,
+          schema and eval-harness references.</span>
+        <span class="mono">Full plan: <code>IncidentPilot_Detailed_Implementation_Plan.md</code></span>
+        <span>Re-verify version pins and the competitive landscape before interviews — both move.</span>
+      </footer>
+
+    </main>
+  </div>
+</div>
+
+<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+  var map = {};
+  links.forEach(function (a) {
+    var el = document.querySelector(a.getAttribute('href'));
+    if (el) { map[el.id] = a; }
+  });
+  var seen = [];
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      var i = seen.indexOf(e.target.id);
+      if (e.isIntersecting && i === -1) { seen.push(e.target.id); }
+      if (!e.isIntersecting && i !== -1) { seen.splice(i, 1); }
+    });
+    links.forEach(function (a) { a.classList.remove('on'); });
+    if (seen.length) {
+      var first = seen.slice().sort(function (a, b) {
+        return document.getElementById(a).offsetTop - document.getElementById(b).offsetTop;
+      })[0];
+      if (map[first]) { map[first].classList.add('on'); }
+    }
+  }, { rootMargin: '-10% 0px -70% 0px' });
+  Object.keys(map).forEach(function (id) { obs.observe(document.getElementById(id)); });
+})();
+</script>
