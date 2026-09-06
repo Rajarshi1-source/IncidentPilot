@@ -1,0 +1,59 @@
+# Service dependency graph — the D3 fallback.
+#
+# An edge `service: [a, b]` means "service depends on a and b". Depth is
+# measured downward, so a datastore that everything depends on is deep and a
+# user-facing API is shallow. That orientation is what makes root-signal
+# selection pick the database rather than the six services shouting about it.
+#
+# TraceMap generates this from live traces when it is deployed. This file is the
+# fallback, and it always ships: a component that only works when another
+# project is running is not a product.
+#
+# Recompute `services.graph_depth` whenever this changes — depth is cached in
+# the database because correlation runs on the hot path, and a recursive CTE per
+# alert during a storm is exactly the wrong place to spend milliseconds.
+
+services:
+  # --- edge / user-facing (tier 1) -------------------------------------
+  checkout-web:
+    - payments-api
+    - catalog-api
+    - session-store
+
+  payments-api:
+    - payments-worker
+    - postgres-primary
+    - valkey-cache
+    - upi-gateway
+
+  catalog-api:
+    - postgres-replica
+    - search-index
+
+  # --- internal services (tier 2) --------------------------------------
+  payments-worker:
+    - postgres-primary
+    - kafka-events
+
+  notifications:
+    - kafka-events
+    - valkey-cache
+
+  search-index:
+    - kafka-events
+
+  session-store:
+    - valkey-cache
+
+  # --- data layer (tier 1 infrastructure) ------------------------------
+  postgres-replica:
+    - postgres-primary
+
+  postgres-primary: []
+  valkey-cache: []
+  kafka-events: []
+
+  # --- third party ------------------------------------------------------
+  # Depended on, never owned. Present so correlation can reason about hops to
+  # it, and so a runbook can say "this one is not ours to fix".
+  upi-gateway: []

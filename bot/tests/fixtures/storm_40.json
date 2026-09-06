@@ -1,0 +1,736 @@
+{
+  "receiver": "incidentpilot",
+  "status": "firing",
+  "externalURL": "http://alertmanager:9093",
+  "version": "4",
+  "truncatedAlerts": 0,
+  "groupLabels": {
+    "cluster": "prod-ap-south-1"
+  },
+  "commonLabels": {
+    "cluster": "prod-ap-south-1"
+  },
+  "commonAnnotations": {},
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PostgresPrimaryDown",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-primary",
+        "severity": "critical",
+        "pod": "postgres-primary-22638",
+        "instance": "10.42.0.0:9090"
+      },
+      "annotations": {
+        "summary": "pg_up == 0 for 2m on postgres-primary"
+      },
+      "startsAt": "2026-09-06T09:14:02Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PostgresConnectionsExhausted",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-primary",
+        "severity": "critical",
+        "pod": "postgres-primary-48551",
+        "instance": "10.42.8.56:9090"
+      },
+      "annotations": {
+        "summary": "connection pool saturated, 100/100 in use"
+      },
+      "startsAt": "2026-09-06T09:14:10Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "ReplicaLagHigh",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-replica",
+        "severity": "critical",
+        "pod": "postgres-replica-25643",
+        "instance": "10.42.14.98:9090"
+      },
+      "annotations": {
+        "summary": "replica lag 412s and climbing"
+      },
+      "startsAt": "2026-09-06T09:14:16Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "ReplicaLagHigh",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-replica",
+        "severity": "warning",
+        "pod": "postgres-replica-91558",
+        "instance": "10.42.19.133:9090"
+      },
+      "annotations": {
+        "summary": "replica lag exceeded warning threshold"
+      },
+      "startsAt": "2026-09-06T09:14:21Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-api",
+        "severity": "critical",
+        "pod": "payments-api-49819",
+        "instance": "10.42.23.161:9090"
+      },
+      "annotations": {
+        "summary": "5xx rate 41% for payments-api"
+      },
+      "startsAt": "2026-09-06T09:14:25Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodCrashLoopBackOff",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-worker",
+        "severity": "critical",
+        "pod": "payments-worker-36149",
+        "instance": "10.42.27.189:9090"
+      },
+      "annotations": {
+        "summary": "payments-worker-7d9c4b8f6-x2klm restarting"
+      },
+      "startsAt": "2026-09-06T09:14:29Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-worker",
+        "severity": "critical",
+        "pod": "payments-worker-78201",
+        "instance": "10.42.31.217:9090"
+      },
+      "annotations": {
+        "summary": "worker job failure rate 88%"
+      },
+      "startsAt": "2026-09-06T09:14:33Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "LatencyP99High",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-api",
+        "severity": "warning",
+        "pod": "payments-api-38783",
+        "instance": "10.42.34.238:9090"
+      },
+      "annotations": {
+        "summary": "p99 latency 8.2s (threshold 1s)"
+      },
+      "startsAt": "2026-09-06T09:14:36Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "storefront",
+        "service": "checkout-web",
+        "severity": "critical",
+        "pod": "checkout-web-58273",
+        "instance": "10.42.38.16:9090"
+      },
+      "annotations": {
+        "summary": "checkout completion rate dropped to 12%"
+      },
+      "startsAt": "2026-09-06T09:14:40Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "LatencyP99High",
+        "cluster": "prod-ap-south-1",
+        "namespace": "storefront",
+        "service": "checkout-web",
+        "severity": "warning",
+        "pod": "checkout-web-70437",
+        "instance": "10.42.41.37:9090"
+      },
+      "annotations": {
+        "summary": "p99 latency 11.4s"
+      },
+      "startsAt": "2026-09-06T09:14:43Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "catalog",
+        "service": "catalog-api",
+        "severity": "warning",
+        "pod": "catalog-api-26619",
+        "instance": "10.42.45.65:9090"
+      },
+      "annotations": {
+        "summary": "5xx rate 6% for catalog-api"
+      },
+      "startsAt": "2026-09-06T09:14:47Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "LatencyP99High",
+        "cluster": "prod-ap-south-1",
+        "namespace": "catalog",
+        "service": "catalog-api",
+        "severity": "warning",
+        "pod": "catalog-api-96334",
+        "instance": "10.42.49.93:9090"
+      },
+      "annotations": {
+        "summary": "p99 latency 2.1s"
+      },
+      "startsAt": "2026-09-06T09:14:51Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "KafkaConsumerLag",
+        "cluster": "prod-ap-south-1",
+        "namespace": "platform",
+        "service": "kafka-events",
+        "severity": "warning",
+        "pod": "kafka-events-68412",
+        "instance": "10.42.53.121:9090"
+      },
+      "annotations": {
+        "summary": "consumer group payments-worker lag 240k"
+      },
+      "startsAt": "2026-09-06T09:14:55Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "KafkaConsumerLag",
+        "cluster": "prod-ap-south-1",
+        "namespace": "platform",
+        "service": "kafka-events",
+        "severity": "critical",
+        "pod": "kafka-events-34699",
+        "instance": "10.42.58.156:9090"
+      },
+      "annotations": {
+        "summary": "consumer group notifications lag 890k"
+      },
+      "startsAt": "2026-09-06T09:15:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "platform",
+        "service": "notifications",
+        "severity": "warning",
+        "pod": "notifications-12179",
+        "instance": "10.42.62.184:9090"
+      },
+      "annotations": {
+        "summary": "notification delivery failures 34%"
+      },
+      "startsAt": "2026-09-06T09:15:04Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "SearchIndexStale",
+        "cluster": "prod-ap-south-1",
+        "namespace": "catalog",
+        "service": "search-index",
+        "severity": "warning",
+        "pod": "search-index-45563",
+        "instance": "10.42.67.219:9090"
+      },
+      "annotations": {
+        "summary": "index lag behind source by 14m"
+      },
+      "startsAt": "2026-09-06T09:15:09Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodCrashLoopBackOff",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-api",
+        "severity": "critical",
+        "pod": "payments-api-07502",
+        "instance": "10.42.71.247:9090"
+      },
+      "annotations": {
+        "summary": "payments-api-6f8b restarting, OOMKilled"
+      },
+      "startsAt": "2026-09-06T09:15:13Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodNotReady",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-worker",
+        "severity": "critical",
+        "pod": "payments-worker-29491",
+        "instance": "10.42.76.32:9090"
+      },
+      "annotations": {
+        "summary": "3/5 replicas not ready"
+      },
+      "startsAt": "2026-09-06T09:15:18Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "CacheHitRateLow",
+        "cluster": "prod-ap-south-1",
+        "namespace": "platform",
+        "service": "valkey-cache",
+        "severity": "warning",
+        "pod": "valkey-cache-48541",
+        "instance": "10.42.81.67:9090"
+      },
+      "annotations": {
+        "summary": "hit rate dropped to 31%"
+      },
+      "startsAt": "2026-09-06T09:15:23Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "SessionStoreErrors",
+        "cluster": "prod-ap-south-1",
+        "namespace": "storefront",
+        "service": "session-store",
+        "severity": "warning",
+        "pod": "session-store-14488",
+        "instance": "10.42.86.102:9090"
+      },
+      "annotations": {
+        "summary": "session write failures 12%"
+      },
+      "startsAt": "2026-09-06T09:15:28Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "upi-gateway",
+        "severity": "critical",
+        "pod": "upi-gateway-52691",
+        "instance": "10.42.92.144:9090"
+      },
+      "annotations": {
+        "summary": "upstream UPI gateway returning 503"
+      },
+      "startsAt": "2026-09-06T09:15:34Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PaymentSettlementBacklog",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-worker",
+        "severity": "critical",
+        "pod": "payments-worker-67711",
+        "instance": "10.42.98.186:9090"
+      },
+      "annotations": {
+        "summary": "unsettled payments backlog 4,182"
+      },
+      "startsAt": "2026-09-06T09:15:40Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodNotReady",
+        "cluster": "prod-ap-south-1",
+        "namespace": "storefront",
+        "service": "checkout-web",
+        "severity": "warning",
+        "pod": "checkout-web-80613",
+        "instance": "10.42.104.228:9090"
+      },
+      "annotations": {
+        "summary": "2/6 replicas not ready"
+      },
+      "startsAt": "2026-09-06T09:15:46Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "DiskPressure",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-primary",
+        "severity": "warning",
+        "pod": "postgres-primary-77061",
+        "instance": "10.42.111.27:9090"
+      },
+      "annotations": {
+        "summary": "WAL volume at 87%"
+      },
+      "startsAt": "2026-09-06T09:15:53Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PostgresReplicationBroken",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-replica",
+        "severity": "critical",
+        "pod": "postgres-replica-26645",
+        "instance": "10.42.118.76:9090"
+      },
+      "annotations": {
+        "summary": "replication slot inactive"
+      },
+      "startsAt": "2026-09-06T09:16:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "storefront",
+        "service": "session-store",
+        "severity": "warning",
+        "pod": "session-store-28380",
+        "instance": "10.42.125.125:9090"
+      },
+      "annotations": {
+        "summary": "5xx rate 9%"
+      },
+      "startsAt": "2026-09-06T09:16:07Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "LatencyP99High",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-worker",
+        "severity": "warning",
+        "pod": "payments-worker-30516",
+        "instance": "10.42.132.174:9090"
+      },
+      "annotations": {
+        "summary": "job duration p99 47s"
+      },
+      "startsAt": "2026-09-06T09:16:14Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "QueueDepthHigh",
+        "cluster": "prod-ap-south-1",
+        "namespace": "platform",
+        "service": "kafka-events",
+        "severity": "warning",
+        "pod": "kafka-events-67222",
+        "instance": "10.42.139.223:9090"
+      },
+      "annotations": {
+        "summary": "topic payments.settlement depth 1.2M"
+      },
+      "startsAt": "2026-09-06T09:16:21Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodCrashLoopBackOff",
+        "cluster": "prod-ap-south-1",
+        "namespace": "platform",
+        "service": "notifications",
+        "severity": "warning",
+        "pod": "notifications-41666",
+        "instance": "10.42.147.29:9090"
+      },
+      "annotations": {
+        "summary": "notifications-5b7c restarting"
+      },
+      "startsAt": "2026-09-06T09:16:29Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "CertificateExpiringSoon",
+        "cluster": "prod-ap-south-1",
+        "namespace": "storefront",
+        "service": "checkout-web",
+        "severity": "info",
+        "pod": "checkout-web-47573",
+        "instance": "10.42.154.78:9090"
+      },
+      "annotations": {
+        "summary": "TLS certificate expires in 12 days"
+      },
+      "startsAt": "2026-09-06T09:16:36Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "catalog",
+        "service": "search-index",
+        "severity": "warning",
+        "pod": "search-index-68079",
+        "instance": "10.42.162.134:9090"
+      },
+      "annotations": {
+        "summary": "indexing failures 22%"
+      },
+      "startsAt": "2026-09-06T09:16:44Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "LatencyP99High",
+        "cluster": "prod-ap-south-1",
+        "namespace": "storefront",
+        "service": "session-store",
+        "severity": "warning",
+        "pod": "session-store-62374",
+        "instance": "10.42.170.190:9090"
+      },
+      "annotations": {
+        "summary": "p99 latency 890ms"
+      },
+      "startsAt": "2026-09-06T09:16:52Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodNotReady",
+        "cluster": "prod-ap-south-1",
+        "namespace": "catalog",
+        "service": "catalog-api",
+        "severity": "warning",
+        "pod": "catalog-api-34780",
+        "instance": "10.42.178.246:9090"
+      },
+      "annotations": {
+        "summary": "1/4 replicas not ready"
+      },
+      "startsAt": "2026-09-06T09:17:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "MemoryPressure",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-api",
+        "severity": "warning",
+        "pod": "payments-api-44364",
+        "instance": "10.42.187.59:9090"
+      },
+      "annotations": {
+        "summary": "container memory at 91% of limit"
+      },
+      "startsAt": "2026-09-06T09:17:09Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PostgresLocksHigh",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-primary",
+        "severity": "warning",
+        "pod": "postgres-primary-01467",
+        "instance": "10.42.195.115:9090"
+      },
+      "annotations": {
+        "summary": "1,204 waiting locks"
+      },
+      "startsAt": "2026-09-06T09:17:17Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-api",
+        "severity": "critical",
+        "pod": "payments-api-26637",
+        "instance": "10.42.204.178:9090"
+      },
+      "annotations": {
+        "summary": "5xx rate still 38% after 3m"
+      },
+      "startsAt": "2026-09-06T09:17:26Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "SLOBurnRateFast",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-api",
+        "severity": "critical",
+        "pod": "payments-api-60625",
+        "instance": "10.42.213.241:9090"
+      },
+      "annotations": {
+        "summary": "error budget burning at 14.4x"
+      },
+      "startsAt": "2026-09-06T09:17:35Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "SLOBurnRateFast",
+        "cluster": "prod-ap-south-1",
+        "namespace": "storefront",
+        "service": "checkout-web",
+        "severity": "critical",
+        "pod": "checkout-web-31030",
+        "instance": "10.42.222.54:9090"
+      },
+      "annotations": {
+        "summary": "error budget burning at 21.7x"
+      },
+      "startsAt": "2026-09-06T09:17:44Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "QueueDepthHigh",
+        "cluster": "prod-ap-south-1",
+        "namespace": "platform",
+        "service": "kafka-events",
+        "severity": "warning",
+        "pod": "kafka-events-62635",
+        "instance": "10.42.231.117:9090"
+      },
+      "annotations": {
+        "summary": "topic notifications.outbound depth 640k"
+      },
+      "startsAt": "2026-09-06T09:17:53Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PodNotReady",
+        "cluster": "prod-ap-south-1",
+        "namespace": "platform",
+        "service": "notifications",
+        "severity": "warning",
+        "pod": "notifications-04204",
+        "instance": "10.42.240.180:9090"
+      },
+      "annotations": {
+        "summary": "2/3 replicas not ready"
+      },
+      "startsAt": "2026-09-06T09:18:02Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    }
+  ]
+}

@@ -76,3 +76,15 @@ logs: ## Tail the api logs
 .PHONY: gate-g1
 gate-g1: ## G1 — bad bearer 401, good 202 at p99 < 250ms, entry on the stream
 	@bash scripts/bench_ingest.sh --n 100 --p99-max-ms 250
+
+.PHONY: gate-g2
+gate-g2: ## G2 — migrations round-trip; 40-alert storm to one incident
+	@bash scripts/gate_g2.sh
+
+.PHONY: migrate
+migrate: ## Apply migrations to head
+	$(UV) run alembic upgrade head
+
+.PHONY: fixtures
+fixtures: ## Regenerate the storm fixtures
+	$(UV) run python tests/fixtures/make_storm.py

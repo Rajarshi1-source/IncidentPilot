@@ -79,6 +79,12 @@ FORBIDDEN_CALLS: frozenset[tuple[str, str]] = frozenset(
     }
 )
 
+# Builtins that reach the outside world without importing anything. The import
+# scan cannot see these -- `open("service-graph.yaml")` needs no import at all,
+# and it is exactly the shortcut someone takes when adding a config loader to a
+# domain module in a hurry.
+FORBIDDEN_BUILTINS: frozenset[str] = frozenset({"open", "input", "eval", "exec", "compile"})
+
 
 def _domain_files() -> list[Path]:
     return sorted(p for p in DOMAIN.rglob("*.py") if p.name != "__init__.py")
@@ -140,6 +146,26 @@ def test_domain_never_reads_the_clock() -> None:
             if owner_name and (owner_name, func.attr) in FORBIDDEN_CALLS:
                 violations.append(f"{path.name}:{node.lineno} {owner_name}.{func.attr}()")
     assert not violations, "clock access in domain/:\n  " + "\n  ".join(violations)
+
+
+def test_domain_never_calls_an_io_builtin() -> None:
+    """`open()` imports nothing, so the import scan cannot see it.
+
+    This is the shortcut someone takes when a domain module needs config: read
+    the YAML right here. The loader belongs outside domain/, and this test is
+    what says so at the moment it happens rather than in review three days later.
+    """
+    violations: list[str] = []
+    for path in _domain_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in FORBIDDEN_BUILTINS
+            ):
+                violations.append(f"{path.name}:{node.lineno} {node.func.id}()")
+    assert not violations, "I/O builtin used in domain/:\n  " + "\n  ".join(violations)
 
 
 def test_domain_declares_no_module_level_mutable_state() -> None:

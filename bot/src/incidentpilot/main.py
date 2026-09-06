@@ -23,9 +23,13 @@ from incidentpilot.config.assert_invariants import assert_invariants
 from incidentpilot.config.settings import Settings
 from incidentpilot.config.settings import settings as default_settings
 from incidentpilot.orchestration.streams import StreamClient, StreamProducer
+from incidentpilot.runtime import configure_event_loop
 from incidentpilot.telemetry.logging import configure_logging, get_logger, reset_context
 from incidentpilot.telemetry.metrics import set_degradation_level
 from incidentpilot.telemetry.tracing import configure_tracing, current_trace_id
+
+# Must run before anything opens an async connection (Windows/psycopg).
+configure_event_loop()
 
 log = get_logger(__name__)
 

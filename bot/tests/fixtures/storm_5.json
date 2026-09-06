@@ -1,0 +1,106 @@
+{
+  "receiver": "incidentpilot",
+  "status": "firing",
+  "externalURL": "http://alertmanager:9093",
+  "version": "4",
+  "truncatedAlerts": 0,
+  "groupLabels": {
+    "cluster": "prod-ap-south-1"
+  },
+  "commonLabels": {
+    "cluster": "prod-ap-south-1"
+  },
+  "commonAnnotations": {},
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PostgresPrimaryDown",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-primary",
+        "severity": "critical",
+        "pod": "postgres-primary-22638",
+        "instance": "10.42.0.0:9090"
+      },
+      "annotations": {
+        "summary": "pg_up == 0 for 2m on postgres-primary"
+      },
+      "startsAt": "2026-09-06T09:14:02Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PostgresConnectionsExhausted",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-primary",
+        "severity": "critical",
+        "pod": "postgres-primary-48551",
+        "instance": "10.42.8.56:9090"
+      },
+      "annotations": {
+        "summary": "connection pool saturated, 100/100 in use"
+      },
+      "startsAt": "2026-09-06T09:14:10Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "ReplicaLagHigh",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-replica",
+        "severity": "critical",
+        "pod": "postgres-replica-25643",
+        "instance": "10.42.14.98:9090"
+      },
+      "annotations": {
+        "summary": "replica lag 412s and climbing"
+      },
+      "startsAt": "2026-09-06T09:14:16Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "ReplicaLagHigh",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-replica",
+        "severity": "warning",
+        "pod": "postgres-replica-91558",
+        "instance": "10.42.19.133:9090"
+      },
+      "annotations": {
+        "summary": "replica lag exceeded warning threshold"
+      },
+      "startsAt": "2026-09-06T09:14:21Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-api",
+        "severity": "critical",
+        "pod": "payments-api-49819",
+        "instance": "10.42.23.161:9090"
+      },
+      "annotations": {
+        "summary": "5xx rate 41% for payments-api"
+      },
+      "startsAt": "2026-09-06T09:14:25Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph"
+    }
+  ]
+}

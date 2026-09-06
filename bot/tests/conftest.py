@@ -7,7 +7,9 @@ it from week 1 keeps it honest.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +93,23 @@ class FakePipeline:
             results.append(await self._client.xadd(name, fields, maxlen=maxlen))
         self._queued.clear()
         return results
+
+
+@pytest.fixture(scope="session")
+def event_loop_policy() -> asyncio.AbstractEventLoopPolicy:
+    """psycopg async cannot run on Windows' default ProactorEventLoop.
+
+    It raises `InterfaceError: Psycopg cannot use the 'ProactorEventLoop' to run
+    in async mode`, so every async database call fails on a Windows dev machine
+    while passing in Linux CI -- the worst shape of bug to debug, because the
+    suite is green everywhere it runs automatically.
+
+    Production is Linux containers where the default is already a selector loop;
+    this only affects local development. See `incidentpilot.runtime`.
+    """
+    if sys.platform == "win32":
+        return asyncio.WindowsSelectorEventLoopPolicy()
+    return asyncio.get_event_loop_policy()
 
 
 @pytest.fixture

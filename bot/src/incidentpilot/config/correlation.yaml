@@ -1,0 +1,35 @@
+# Storm-compression tuning (D3).
+#
+# These values are read by the worker and passed into `correlate()` as a
+# parameter -- never imported into `domain/`. That is what makes the eval
+# harness's counterfactual mode work: `--set correlation.window_s=600` replays a
+# real incident against a different cfg object and reports what would have
+# happened.
+
+correlation:
+  # How long after an incident's last activity a new alert can still join it.
+  # Measured from last activity, not from detection: a cascade still firing four
+  # minutes in is still the same incident.
+  window_s: 300
+
+  # Tuned on the corpus. Raising it under-correlates (more channels); lowering
+  # it risks merging genuinely independent incidents, which is worse -- two
+  # channels is a nuisance, a hidden outage is not.
+  merge_threshold: 0.62
+
+  # Alerts absorbed before the incident announces itself as a storm. Gates the
+  # in-channel banner and the ip_alerts_per_incident metric, NOT the merge
+  # decision.
+  storm_threshold: 5
+
+  # Signal weights. They sum to 1.0 and are deliberately interpretable: a
+  # hand-tuned linear score you can explain in a Slack message beats a
+  # black-box classifier you cannot defend. Changing these is an eval-gated PR.
+  weights:
+    temporal: 0.4
+    topology: 0.4
+    labels: 0.2
+
+  # Beyond this many hops, two services are not meaningfully related and the
+  # topology signal contributes nothing.
+  max_hops: 2

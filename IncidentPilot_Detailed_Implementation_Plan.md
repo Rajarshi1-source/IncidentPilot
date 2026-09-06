@@ -285,7 +285,7 @@ adherence with a `LEFT JOIN LATERAL (SELECT count(*) ...)` against the per-step 
 **Resolution: use the reference (`avg`) for the committed migration, and add the Toolkit p95 as a
 second, optional aggregate.** `approx_percentile`/`percentile_agg` ship in **TimescaleDB Toolkit**,
 which is a separate extension from `timescaledb`. It *is* present in the
-`timescale/timescaledb-ha:pg18.6-ts2.29.2` image, so Rev 2's version works in Docker — but it will
+`timescale/timescaledb-ha:pg18.4-ts2.29.2` image, so Rev 2's version works in Docker — but it will
 fail on a plain `timescaledb` install, and the migration must therefore
 `CREATE EXTENSION IF NOT EXISTS timescaledb_toolkit` before using it. W2-04 adds that extension
 guarded, and puts p95 in a separate cagg so a Toolkit-less environment degrades to the average
@@ -720,7 +720,7 @@ Two notes worth a sentence in an interview:
 ### 3.2 Image pins (no `latest`, ever)
 
 ```
-timescale/timescaledb-ha:pg18.6-ts2.29.2    # includes Toolkit (see C-08)
+timescale/timescaledb-ha:pg18.4-ts2.29.2    # includes Toolkit (see C-08)
 valkey/valkey:9.1.2-alpine
 prom/prometheus:v3.14.0
 prom/alertmanager:v0.34.0                    # reason-label change — see §15.4

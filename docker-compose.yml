@@ -46,7 +46,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: timescale/timescaledb-ha:pg18.6-ts2.29.2
+    image: timescale/timescaledb-ha:pg18.4-ts2.29.2
     environment:
       POSTGRES_DB: incidentpilot
       POSTGRES_USER: ip
