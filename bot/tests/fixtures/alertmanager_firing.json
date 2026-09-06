@@ -1,0 +1,63 @@
+{
+  "receiver": "incidentpilot",
+  "status": "firing",
+  "externalURL": "http://alertmanager:9093",
+  "version": "4",
+  "groupKey": "{}/{severity=\"sev1\"}:{alertname=\"PostgresPrimaryDown\", service=\"postgres-primary\"}",
+  "truncatedAlerts": 0,
+  "groupLabels": {
+    "alertname": "PostgresPrimaryDown"
+  },
+  "commonLabels": {
+    "alertname": "PostgresPrimaryDown",
+    "cluster": "prod-ap-south-1",
+    "namespace": "data",
+    "service": "postgres-primary",
+    "severity": "critical"
+  },
+  "commonAnnotations": {
+    "runbook_url": "https://runbooks.internal/postgres-primary-down"
+  },
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "PostgresPrimaryDown",
+        "cluster": "prod-ap-south-1",
+        "namespace": "data",
+        "service": "postgres-primary",
+        "severity": "critical",
+        "pod": "postgres-primary-0",
+        "instance": "10.42.7.19:9187"
+      },
+      "annotations": {
+        "summary": "Postgres primary is not accepting connections",
+        "description": "pg_up == 0 for 2m on postgres-primary in prod-ap-south-1"
+      },
+      "startsAt": "2026-09-06T09:14:02.117Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph?g0.expr=pg_up+%3D%3D+0",
+      "fingerprint": "b7f3c1d2e8a94f60"
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "cluster": "prod-ap-south-1",
+        "namespace": "payments",
+        "service": "payments-api",
+        "severity": "critical",
+        "pod": "payments-api-7d9c4b8f6-x2klm",
+        "instance": "10.42.3.88:8080"
+      },
+      "annotations": {
+        "summary": "5xx rate above 5% for payments-api",
+        "description": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) > 0.05"
+      },
+      "startsAt": "2026-09-06T09:14:47.902Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus:9090/graph",
+      "fingerprint": "c9a1e4b7d3f28051"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Environment — never commit real secrets. .env.example is the tracked template.
+.env
+.env.*
+!.env.example
+
+# Node (dashboard, W8)
+node_modules/
+.next/
+out/
+
+# Local scratch
+*.log

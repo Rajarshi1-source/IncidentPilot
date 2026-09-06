@@ -1,0 +1,86 @@
+"""12-factor configuration. Import ``settings``; never read ``os.environ``.
+
+Settings are injected into constructors rather than reached for globally, which
+is why the tests need no monkeypatching -- and no-monkeypatching is itself a
+signal about the design.
+
+Every secret is ``SecretStr | None`` (conflict C-01). Rev 2 declares the Slack
+signing secret required, but the repository's most valuable property is that a
+stranger can clone it and run the full demo with no credentials. A secret that
+is required at *import* time makes ``docker compose up`` fail on a clean clone.
+The requirement is real, so it moves to *startup* time, where it can tell the
+difference between dev and production -- see ``assert_invariants``.
+"""
+
+from __future__ import annotations
+
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="IP_",
+        env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    environment: str = "dev"
+
+    # --- infrastructure -------------------------------------------------
+    database_url: SecretStr = SecretStr("postgresql+psycopg://ip:ip@localhost:5432/incidentpilot")
+    valkey_url: SecretStr = SecretStr("redis://localhost:6379/0")
+
+    # --- providers, named by ROLE, never by vendor ----------------------
+    chat_provider: str = "fake"
+    paging_provider: str = "static"
+    metrics_provider: str = "fake"
+    llm_config_path: str = "config/models.yaml"
+
+    # --- trust boundary -------------------------------------------------
+    # Optional here, enforced at startup in non-dev environments (C-01).
+    slack_signing_secret: SecretStr | None = None
+    alertmanager_bearer: SecretStr | None = None
+    paging_webhook_secret: SecretStr | None = None
+    deploy_bearer: SecretStr | None = None
+    signature_max_age_s: int = 300
+
+    # --- governance -----------------------------------------------------
+    llm_budget_usd_per_incident: float = 0.50
+    llm_budget_usd_per_day: float = 5.0
+    llm_budget_usd_per_month: float = 50.0
+    require_citations: bool = True  # CI asserts this is True in prod configs
+    redact_pii: bool = True
+    demo_mode: bool = False
+
+    # --- correlation (D3) -----------------------------------------------
+    correlation_window_s: int = 300
+    merge_threshold: float = 0.62
+    storm_threshold: int = 5
+
+    # --- fatigue (D5) ---------------------------------------------------
+    fatigue_lookback_h: int = 8
+    fatigue_max_pages: int = 2
+
+    # --- streams --------------------------------------------------------
+    stream_maxlen: int = 100_000
+    stream_alerts_raw: str = "alerts.raw"
+    stream_alerts_resolved: str = "alerts.resolved"
+    stream_alerts_wal: str = "alerts.wal"
+
+    # --- server ---------------------------------------------------------
+    log_level: str = "INFO"
+    log_json: bool = True
+    otel_enabled: bool = False
+    otel_endpoint: str | None = None
+    service_name: str = "incidentpilot-api"
+    shutdown_grace_s: int = Field(default=30, ge=1, le=120)
+
+    @property
+    def is_dev(self) -> bool:
+        return self.environment.lower() in {"dev", "local", "test"}
+
+
+settings = Settings()

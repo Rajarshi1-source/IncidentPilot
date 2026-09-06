@@ -1,0 +1,96 @@
+# No `version:` key -- obsolete in Compose v2, which warns on it (B-14).
+#
+# The defining property of this file: `docker compose up` works on a clean clone
+# with NO .env file and NO credentials. Every secret below defaults with `:-`,
+# never `:?` (conflict C-02), and the chat and LLM providers default to `fake`.
+# An interviewer can clone this repository and run the full demo -- storm
+# compression, war room, PIR -- without an API key. Very few portfolio projects
+# actually run for a stranger; be one of them.
+name: incidentpilot
+
+x-bot-env: &bot-env
+  IP_ENVIRONMENT: local
+  IP_DATABASE_URL: postgresql+psycopg://ip:ip@postgres:5432/incidentpilot
+  IP_VALKEY_URL: redis://valkey:6379/0
+
+  # Fake by default. A fake LLM provider alone is not enough -- channel creation
+  # would still call a Slack API that rejects a placeholder token (C-02).
+  IP_CHAT_PROVIDER: ${CHAT_PROVIDER:-fake}
+  IP_METRICS_PROVIDER: ${METRICS_PROVIDER:-fake}
+  IP_PAGING_PROVIDER: ${PAGING_PROVIDER:-static}
+
+  IP_SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-dev-not-a-real-secret}
+  IP_SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-xoxb-fake-for-demo}
+  IP_ALERTMANAGER_BEARER: ${ALERTMANAGER_BEARER:-local-dev-token}
+  IP_PAGING_WEBHOOK_SECRET: ${PAGING_WEBHOOK_SECRET:-local-dev-paging-secret}
+
+  IP_REDACT_PII: "true"
+  IP_LOG_JSON: "true"
+
+services:
+  api:
+    build:
+      context: ./bot
+      target: runtime
+    environment: *bot-env
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      valkey: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
+  postgres:
+    image: timescale/timescaledb-ha:pg18.6-ts2.29.2
+    environment:
+      POSTGRES_DB: incidentpilot
+      POSTGRES_USER: ip
+      POSTGRES_PASSWORD: ip
+    volumes:
+      - pgdata:/home/postgres/pgdata
+      - ./deploy/compose/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ip -d incidentpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports: ["5432:5432"]
+
+  valkey:
+    image: valkey/valkey:9.1.2-alpine
+    # AOF everysec: a hard crash loses at most one second of stream entries, and
+    # Alertmanager re-sends on its repeat_interval anyway. That bounded, already
+    # recoverable loss is why this is a single instance and not a Sentinel set.
+    command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes: [valkeydata:/data]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports: ["6379:6379"]
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    volumes: ["./monitoring/prometheus:/etc/prometheus:ro"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    ports: ["9090:9090"]
+    depends_on: [api]
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.0
+    volumes: ["./monitoring/alertmanager:/etc/alertmanager:ro"]
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    ports: ["9093:9093"]
+
+volumes:
+  pgdata: {}
+  valkeydata: {}

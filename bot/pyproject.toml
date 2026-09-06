@@ -1,0 +1,85 @@
+[project]
+name = "incidentpilot"
+version = "0.1.0"
+description = "Self-hosted incident response platform with citation-anchored post-incident reviews"
+requires-python = "==3.14.*"
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn[standard]==0.52.4",
+  "pydantic==2.13.5",
+  "pydantic-settings==2.15.0",
+  "sqlalchemy==2.0.52",
+  "alembic==1.19.2",
+  "psycopg[binary,pool]==3.3.5",
+  "redis==8.1.0",
+  "slack-bolt==1.30.0",
+  "slack-sdk==3.44.1",
+  "httpx==0.28.1",
+  "tenacity==9.1.4",
+  "pybreaker==1.4.1",
+  "structlog==26.1.0",
+  "prometheus-client==0.26.0",
+  "opentelemetry-sdk==1.44.0",
+  "pyyaml==6.0.2",
+  # DEFERRED (see docs/ADR/0001-dependency-pin-conflicts.md):
+  #   arq==0.28.0            -> caps redis[hiredis]<6; conflicts with redis==8.1.0.
+  #                             Not needed until W5. Scheduler transport decided then.
+  #   presidio-analyzer      -> not needed until W6; pulls spacy + a model download.
+]
+
+[project.optional-dependencies]
+llm = ["openai==3.8.0", "anthropic==1.4.0"]
+dev = [
+  "ruff==0.16.6",
+  "mypy==2.3.1",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov",
+  "hypothesis",
+  "testcontainers==4.15.0",
+  "respx",
+  "freezegun",
+  "types-PyYAML",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/incidentpilot"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+python_version = "3.14"
+files = ["src", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
+# N818 wants an `Error` suffix on exception names. `Unauthorized` and
+# `MalformedPayload` are the names in the plan's code contract and the starter
+# code, and they read correctly at the call site (`except Unauthorized`).
+# Renaming plan-specified symbols to satisfy a naming default is the wrong
+# trade; the deviation is recorded here rather than applied silently.
+ignore = ["N818"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import fixtures and assert on internals; `assert` is the point.
+"tests/**" = ["S101"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+  "integration: needs Testcontainers or a live Valkey",
+  "replay: eval corpus",
+]
+
+[tool.coverage.run]
+source = ["src/incidentpilot"]

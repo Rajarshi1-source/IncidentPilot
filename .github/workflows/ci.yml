@@ -1,0 +1,209 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.12.10"
+  PYTHON_VERSION: "3.14.7"
+
+jobs:
+  # Path filtering done properly. Rev 1 gated on
+  # `github.event.head_commit.modified`, which is only populated on push events,
+  # is absent on pull requests, and is a list -- so `contains()` tests exact
+  # element equality and is false essentially always. That job never ran once.
+  # A quality gate that never runs is worse than no gate, because you believe
+  # you have one. (B-11)
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      bot: ${{ steps.filter.outputs.bot }}
+      prompts: ${{ steps.filter.outputs.prompts }}
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+      config: ${{ steps.filter.outputs.config }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            bot:
+              - 'bot/**'
+            prompts:
+              - 'bot/src/incidentpilot/pir/prompts/**'
+              - 'bot/src/incidentpilot/config/models.yaml'
+              - 'bot/eval/**'
+            dashboard:
+              - 'dashboard/**'
+            config:
+              - 'monitoring/**'
+              - 'docker-compose.yml'
+              - 'charts/**'
+
+  lint-and-type:
+    needs: changes
+    if: needs.changes.outputs.bot == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --extra dev
+        working-directory: bot
+
+      - name: ruff check
+        run: uv run ruff check src tests
+        working-directory: bot
+
+      - name: ruff format
+        run: uv run ruff format --check src tests
+        working-directory: bot
+
+      - name: mypy --strict
+        run: uv run mypy
+        working-directory: bot
+
+      # INV-07. The system defines three roles -- extract, synthesize, judge --
+      # and each resolves through an adapter from config. A model name in code
+      # means a price change becomes a code change.
+      - name: No hardcoded model or vendor names
+        run: |
+          if grep -rEn "gpt-[0-9]|claude-|gemini-|llama-" bot/src --include="*.py" \
+             | grep -v "src/incidentpilot/config/"; then
+            echo "::error::hardcoded model name - resolve through LLMRouter roles"
+            exit 1
+          fi
+          echo "no hardcoded model names"
+
+      # INV-05 cannot be switched off in a production config.
+      - name: Configuration invariants hold for production
+        run: uv run python -m incidentpilot.config.assert_invariants --environment prod
+        working-directory: bot
+        env:
+          IP_ALERTMANAGER_BEARER: ci-placeholder
+          IP_SLACK_SIGNING_SECRET: ci-placeholder
+          IP_PAGING_WEBHOOK_SECRET: ci-placeholder
+          IP_CHAT_PROVIDER: slack
+          IP_METRICS_PROVIDER: prometheus
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.bot == 'true'
+    runs-on: ubuntu-latest
+    services:
+      valkey:
+        image: valkey/valkey:9.1.2-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --extra dev
+        working-directory: bot
+
+      # INV-01 first and on its own. It is the invariant everything downstream
+      # depends on and the only one that cannot be added later without a
+      # rewrite, so it fails the build loudly rather than inside a summary line.
+      - name: INV-01 - domain purity
+        run: uv run pytest tests/unit/test_domain_purity.py -q
+        working-directory: bot
+
+      - name: Unit tests
+        run: uv run pytest tests/unit -q --cov=incidentpilot --cov-report=term-missing
+        working-directory: bot
+
+      - name: Integration tests (real Valkey)
+        run: uv run pytest tests/integration -q -m integration
+        working-directory: bot
+        env:
+          IP_TEST_VALKEY_URL: redis://localhost:6379/15
+
+  # Config lives outside bot/, so it gets its own trigger. INV-11 is a property
+  # of a YAML file, and a comment in a YAML file survives exactly until someone
+  # reorganizes the routing tree.
+  config-invariants:
+    needs: changes
+    if: needs.changes.outputs.config == 'true' || needs.changes.outputs.bot == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --extra dev
+        working-directory: bot
+
+      - name: INV-11 - the down-alert must not route through us
+        run: uv run pytest tests/unit/test_alertmanager_config.py -q
+        working-directory: bot
+
+      - name: Alertmanager config is valid
+        run: |
+          docker run --rm -v "$PWD/monitoring/alertmanager:/cfg:ro" \
+            --entrypoint amtool prom/alertmanager:v0.34.0 \
+            check-config /cfg/alertmanager.yml
+
+      - name: No floating image tags
+        run: |
+          if grep -rn --include="*.yml" --include="*.yaml" -E "image:.*:latest" . ; then
+            echo "::error::floating 'latest' tag - pin the version"
+            exit 1
+          fi
+          echo "no floating tags"
+
+  docker:
+    needs: changes
+    if: needs.changes.outputs.bot == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the bot image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./bot
+          target: runtime
+          push: false
+          load: true
+          tags: incidentpilot-bot:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container runs as non-root
+        run: |
+          uid=$(docker run --rm --entrypoint id incidentpilot-bot:ci -u)
+          [ "$uid" = "10001" ] || { echo "::error::container runs as uid $uid, expected 10001"; exit 1; }
+          echo "runs as uid 10001"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true

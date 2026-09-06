@@ -1,0 +1,84 @@
+# Alertmanager 0.34.0
+#
+# The critical property in this file is the `fallback` route (INV-11):
+# `IncidentPilotDown` must NOT be delivered through IncidentPilot. If the only
+# path to learning your incident tool is down runs through your incident tool,
+# you have built a circular dependency -- and it is the first thing a good
+# interviewer checks.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: incidentpilot
+  group_by: ['alertname', 'cluster', 'service']
+  # Wait briefly so a cascading failure arrives as one group rather than forty
+  # separate deliveries. Correlation happens in the bot too, but grouping here
+  # means the bot receives the operator's own grouping decision as `groupKey`.
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # ---------------------------------------------------------------------
+    # The meta-alert. This route MUST come first and MUST NOT fall through to
+    # the incidentpilot receiver -- the whole point is that it works when
+    # IncidentPilot does not.
+    # ---------------------------------------------------------------------
+    - matchers:
+        - route = "fallback"
+      receiver: sre-fallback
+      group_wait: 10s
+      repeat_interval: 30m
+      continue: false
+
+    - matchers:
+        - alertname = "IncidentPilotDown"
+      receiver: sre-fallback
+      group_wait: 10s
+      repeat_interval: 30m
+      continue: false
+
+    - matchers:
+        - severity = "ticket"
+      receiver: incidentpilot-ticket
+      group_wait: 5m
+      repeat_interval: 12h
+
+receivers:
+  # Alertmanager cannot sign its payloads -- `http_config` offers basic auth,
+  # bearer tokens, OAuth2 and TLS, and nothing else. There is no HMAC option
+  # here to configure, which is exactly why the receiving endpoint pairs this
+  # bearer with mTLS and a NetworkPolicy allowlist (B-02).
+  - name: incidentpilot
+    webhook_configs:
+      - url: http://api:8000/webhooks/alertmanager
+        send_resolved: true
+        max_alerts: 0
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: local-dev-token
+
+  - name: incidentpilot-ticket
+    webhook_configs:
+      - url: http://api:8000/webhooks/alertmanager
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: local-dev-token
+
+  # Deliberately NOT a webhook to the bot. In a real deployment this is the
+  # paging provider's own endpoint plus a Slack incoming webhook that does not
+  # traverse IncidentPilot. Left as a null receiver locally so `amtool check-config`
+  # passes without inventing a fake external URL.
+  - name: sre-fallback
+
+inhibit_rules:
+  # A service being down makes its error rate meaningless; suppress the symptom
+  # so responders see the cause. This is the same idea as the bot's own storm
+  # compression, applied one layer earlier.
+  - source_matchers: [severity = "critical"]
+    target_matchers: [severity = "warning"]
+    equal: ['cluster', 'service']
