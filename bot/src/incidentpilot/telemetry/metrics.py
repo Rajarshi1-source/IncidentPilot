@@ -165,6 +165,21 @@ BROWNOUT_BUFFERED = Counter(
 )
 
 
+OUTBOX_DEAD = Counter(
+    "ip_outbox_dead_total",
+    "Outbox rows that exhausted their retries, by action.",
+    ["action"],
+    registry=REGISTRY,
+)
+
+OUTBOX_DISPATCHED = Counter(
+    "ip_outbox_dispatched_total",
+    "External side effects performed by the relay, by action.",
+    ["action"],
+    registry=REGISTRY,
+)
+
+
 def set_degradation_level(level: int) -> None:
     """Single writer for the degradation gauge, so the value cannot drift."""
     DEGRADATION_LEVEL.set(level)

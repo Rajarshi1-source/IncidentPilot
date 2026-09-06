@@ -39,6 +39,8 @@ EXPECTED_METRICS = {
     "ip_webhook_rejected_total",
     "ip_alerts_accepted_total",
     "ip_brownout_buffered_total",
+    "ip_outbox_dead_total",
+    "ip_outbox_dispatched_total",
 }
 
 

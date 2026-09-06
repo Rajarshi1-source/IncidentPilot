@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # --- trust boundary -------------------------------------------------
     # Optional here, enforced at startup in non-dev environments (C-01).
     slack_signing_secret: SecretStr | None = None
+    slack_bot_token: SecretStr | None = None
     alertmanager_bearer: SecretStr | None = None
     paging_webhook_secret: SecretStr | None = None
     deploy_bearer: SecretStr | None = None

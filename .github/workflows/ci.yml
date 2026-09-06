@@ -180,9 +180,13 @@ jobs:
             --entrypoint amtool prom/alertmanager:v0.34.0 \
             check-config /cfg/alertmanager.yml
 
+      # The pattern is anchored at a YAML key position on purpose. Unanchored,
+      # `image:.*:latest` matches this very line in this very file -- the check
+      # failed on its own source and reported a floating tag that does not
+      # exist. A guard that flags itself teaches people to ignore it.
       - name: No floating image tags
         run: |
-          if grep -rn --include="*.yml" --include="*.yaml" -E "image:.*:latest" . ; then
+          if grep -rn --include="*.yml" --include="*.yaml"                -E "^[[:space:]]*image:[[:space:]]*[^[:space:]]+:latest" . ; then
             echo "::error::floating 'latest' tag - pin the version"
             exit 1
           fi

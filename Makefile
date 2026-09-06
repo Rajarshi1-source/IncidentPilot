@@ -83,6 +83,14 @@ gate-g1: ## G1 — bad bearer 401, good 202 at p99 < 250ms, entry on the stream
 gate-g2: ## G2 — migrations round-trip; 40-alert storm to one incident
 	@bash scripts/gate_g2.sh
 
+.PHONY: gate-g3
+gate-g3: ## G3 — 12 crash points, no duplicate channel on restart
+	@bash scripts/gate_g3.sh
+
+.PHONY: relay
+relay: ## Run the outbox relay (the only external writer)
+	$(UV) run python -m incidentpilot.orchestration.relay
+
 .PHONY: migrate
 migrate: ## Apply migrations to head
 	$(UV) run alembic upgrade head

@@ -135,6 +135,85 @@ class Orchestrator:
 
         return incident
 
+    async def compensate(
+        self,
+        session: AsyncSession,
+        incident_id: int,
+        *,
+        failed_from: S,
+        failed_to: S,
+        reason: str,
+    ) -> list[str]:
+        """Undo a transition that could not be completed (Saga compensation).
+
+        ``TransitionEffect.compensate`` sits next to the ``outbox`` tuple in
+        ``states.py`` precisely so the undo is impossible to forget -- but a
+        declaration nothing reads is documentation, not behaviour. This is the
+        code that reads it.
+
+        The concrete case: engagement creates a channel, invites responders and
+        pins a runbook. If it fails partway, the channel exists and no incident
+        will ever own it. Compensation archives it rather than leaving debris in
+        the workspace forever.
+
+        Enqueued through the outbox like any other side effect, so the undo is
+        itself retryable and idempotent -- a compensation path that can fail
+        without recovery is just a second way to leak.
+        """
+        actions = effect_for(failed_from, failed_to).compensate
+        enqueued: list[str] = []
+        for action in actions:
+            if await repo.enqueue_outbox(
+                session,
+                incident_id,
+                action,
+                payload={"reason": reason, "failed_transition": f"{failed_from}->{failed_to}"},
+            ):
+                enqueued.append(action)
+
+        if enqueued:
+            with incident_context(incident_id=incident_id):
+                log.warning(
+                    "transition.compensating",
+                    failed_from=failed_from.value,
+                    failed_to=failed_to.value,
+                    actions=enqueued,
+                    reason=reason,
+                )
+        return enqueued
+
+    async def ensure_engaged(
+        self,
+        session: AsyncSession,
+        incident_id: int,
+        *,
+        actor: str = "system",
+    ) -> Incident | None:
+        """Drive a freshly detected incident to ``engaged``, idempotently.
+
+        At-least-once delivery means the worker will see the same alert twice --
+        after a crash between COMMIT and XACK, XAUTOCLAIM redelivers it. A
+        replayed entry must not attempt a transition that already happened, so
+        this advances only from the states where advancing is still meaningful
+        and returns None when there is nothing to do.
+
+        Blindly calling ``transition()`` on redelivery raises
+        ``InvalidTransition`` and sends a perfectly healthy entry to the DLQ.
+        """
+        incident = await repo.get_for_update(session, incident_id)
+        if incident is None:
+            return None
+
+        state = S(incident.state)
+        if state in {S.DETECTED, S.TRIAGING}:
+            if state is S.DETECTED:
+                await self.transition(session, incident_id, S.TRIAGING, actor=actor)
+            return await self.transition(session, incident_id, S.ENGAGED, actor=actor)
+
+        # Already engaged or beyond: the previous attempt got there. Not an
+        # error -- this is what a successful retry looks like.
+        return incident
+
     # -- ingest ----------------------------------------------------------
 
     async def ingest(self, session: AsyncSession, alert: NormalizedAlert) -> IngestOutcome:

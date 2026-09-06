@@ -498,8 +498,13 @@ async def test_compression_ratio_is_sane(session: AsyncSession) -> None:
     await session.execute(
         text(
             """
+            -- Seeded 4-5 days back on purpose. chunk_time_interval is 1 day, so
+            -- data written around now() lands in the CURRENT chunk, which
+            -- `show_chunks(older_than => 0)` will not return -- the test then
+            -- skips, and a gate that fails on skips becomes intermittently red
+            -- for reasons that have nothing to do with the code.
             INSERT INTO signal_samples (time, incident_id, series, service, value)
-            SELECT now() - (s || ' seconds')::interval,
+            SELECT now() - interval '4 days' - (s || ' seconds')::interval,
                    (s % 5) + 1,
                    (ARRAY['http_5xx_rate','p99_latency_ms','pods_unready'])[(s % 3) + 1],
                    (ARRAY['payments-api','postgres-primary'])[(s % 2) + 1],

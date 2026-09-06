@@ -20,7 +20,10 @@ from incidentpilot.api.security import (
     verify_slack,
 )
 
-SECRET = "s3cr3t-signing-key"
+# gitleaks:allow - a fixed input to the HMAC tests, not a credential. The
+# exemption is inline rather than a path rule in .gitleaks.toml so it is
+# visible next to the value and does not silence scanning across tests/.
+SECRET = "not-a-real-secret-hmac-test-input"  # gitleaks:allow
 BODY = b'{"alerts":[{"status":"firing"}]}'
 
 
