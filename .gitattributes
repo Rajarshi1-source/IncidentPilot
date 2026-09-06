@@ -1,0 +1,51 @@
+# Normalize every text file to LF, in the repository *and* in the working tree.
+#
+# `eol=lf` rather than a bare `text=auto` is deliberate. Development happens on
+# Windows but everything ships into Linux containers, and a CRLF shell script or
+# entrypoint fails there with `bad interpreter: /bin/bash^M` — a failure whose
+# confusion is wildly out of proportion to its cause. Normalizing on checkout
+# too means the file that runs in the container is the file on disk.
+* text=auto eol=lf
+
+# The exceptions: scripts that are only ever run by Windows genuinely want CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binary — never translate.
+#
+# `*.skill` matters most here: those are zip archives, and line-ending
+# translation would corrupt them silently, with no error until someone tried to
+# unpack one. Marking them explicitly does not rely on git's content heuristics
+# guessing right.
+*.skill binary
+*.zip   binary
+*.gz    binary
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+
+# Better hunk headers in diffs — git shows the enclosing function or section
+# instead of a bare line number.
+*.py   diff=python
+*.html diff=html
+*.md   diff=markdown
+
+# Generated, not authored. Collapsed by default in review and excluded from the
+# repository's language statistics, but still diffable when you need to look.
+uv.lock                 linguist-generated=true
+package-lock.json       linguist-generated=true
+pnpm-lock.yaml          linguist-generated=true
+
+# Recorded incident fixtures are data, not source. A 400-message transcript is
+# not a code review artifact, and forty of them would otherwise make this repo
+# read as a JSON project.
+bot/eval/corpus/*.jsonl linguist-generated=true
