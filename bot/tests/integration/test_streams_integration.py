@@ -29,7 +29,8 @@ from incidentpilot.orchestration.streams import StreamProducer
 
 pytestmark = pytest.mark.integration
 
-VALKEY_URL = os.environ.get("IP_TEST_VALKEY_URL", "redis://localhost:6379/15")
+# Matches the docker-compose published port (see the port block there).
+VALKEY_URL = os.environ.get("IP_TEST_VALKEY_URL", "redis://127.0.0.1:56379/15")
 
 
 def _alert(name: str = "PostgresPrimaryDown", status: str = "firing") -> NormalizedAlert:

@@ -55,9 +55,11 @@ test-all: test test-integration ## Everything
 .PHONY: up
 up: ## Start the stack (works with no .env and no API key)
 	docker compose up -d --build
-	@echo "  api        http://localhost:8000/healthz"
-	@echo "  metrics    http://localhost:8000/metrics"
-	@echo "  prometheus http://localhost:9090"
+	@echo "  api        http://localhost:$(or $(IP_PORT_API),18000)/healthz"
+	@echo "  metrics    http://localhost:$(or $(IP_PORT_API),18000)/metrics"
+	@echo "  prometheus http://localhost:$(or $(IP_PORT_PROMETHEUS),19090)"
+	@echo "  postgres   localhost:$(or $(IP_PORT_POSTGRES),55432)"
+	@echo "  valkey     localhost:$(or $(IP_PORT_VALKEY),56379)"
 
 .PHONY: down
 down: ## Stop the stack, keep volumes

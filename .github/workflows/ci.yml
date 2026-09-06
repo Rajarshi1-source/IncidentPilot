@@ -108,6 +108,18 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 12
+      postgres:
+        image: timescale/timescaledb-ha:pg18.4-ts2.29.2
+        env:
+          POSTGRES_DB: incidentpilot
+          POSTGRES_USER: ip
+          POSTGRES_PASSWORD: ip
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ip -d incidentpilot"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v5
@@ -129,11 +141,17 @@ jobs:
         run: uv run pytest tests/unit -q --cov=incidentpilot --cov-report=term-missing
         working-directory: bot
 
-      - name: Integration tests (real Valkey)
+      # Actions service containers publish on the standard ports, while the
+      # local compose defaults are remapped to avoid collisions with sibling
+      # projects -- so CI states both URLs explicitly rather than inheriting a
+      # default that is right in only one of the two places.
+      - name: Integration tests (real Postgres + Valkey)
         run: uv run pytest tests/integration -q -m integration
         working-directory: bot
         env:
           IP_TEST_VALKEY_URL: redis://localhost:6379/15
+          IP_TEST_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
+          IP_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
 
   # Config lives outside bot/, so it gets its own trigger. INV-11 is a property
   # of a YAML file, and a comment in a YAML file survives exactly until someone
@@ -169,6 +187,17 @@ jobs:
             exit 1
           fi
           echo "no floating tags"
+
+      # ADR 0002. Every pin in the plan was verified individually and the
+      # combination was not: timescale/timescaledb-ha:pg18.6-ts2.29.2 does not
+      # exist, because the HA image lags the PostgreSQL patch stream. Nothing in
+      # the suite caught it -- unit tests use fakes and integration tests skip
+      # when the database is unreachable, which is exactly what a failed pull
+      # looks like. It would have surfaced on someone else's first clone.
+      - name: Every referenced image actually exists
+        run: docker compose pull --quiet
+        env:
+          SLACK_SIGNING_SECRET: ci-placeholder
 
   docker:
     needs: changes

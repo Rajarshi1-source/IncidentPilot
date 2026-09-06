@@ -12,7 +12,17 @@
 # with every check having passed. Plain command substitution has no such edge.
 set -euo pipefail
 
-HOST="${HOST:-http://localhost:8000}"
+# 127.0.0.1, not localhost, and deliberately so.
+#
+# On Windows `localhost` resolves to ::1 first. A server bound to IPv4 only makes
+# curl attempt IPv6, fail, and fall back -- measured here at 213 ms of connect
+# time per request against 1.2 ms direct. The gate then reports a p99 of ~243 ms
+# against a 250 ms budget while the application's real p99 is ~25 ms: a pass by
+# luck that becomes a spurious failure on a slower machine.
+#
+# A benchmark that measures the harness instead of the system under test is
+# worse than no benchmark, because you act on the number.
+HOST="${HOST:-http://127.0.0.1:18000}"
 BEARER="${ALERTMANAGER_BEARER:-local-dev-token}"
 PAYLOAD="${PAYLOAD:-bot/tests/fixtures/alertmanager_firing.json}"
 N=100

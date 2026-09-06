@@ -8,6 +8,19 @@
 # actually run for a stranger; be one of them.
 name: incidentpilot
 
+# --- host port block -----------------------------------------------------------
+# Published ports are remapped out of the default range and overridable, because
+# this machine runs several capstone projects side by side and two of the
+# defaults were already taken: 5432 by a local PostgreSQL install, and 8000 by a
+# running TraceMap container. 3000 (the week-8 dashboard) and 3001 are taken too.
+#
+# Only the HOST side moves. Inside the compose network the services still talk
+# to postgres:5432 and valkey:6379 -- container-to-container addressing is
+# unaffected, which is why IP_DATABASE_URL below is unchanged.
+#
+# Override any of them without editing this file:
+#   IP_PORT_API=9000 docker compose up
+
 x-bot-env: &bot-env
   IP_ENVIRONMENT: local
   IP_DATABASE_URL: postgresql+psycopg://ip:ip@postgres:5432/incidentpilot
@@ -33,7 +46,7 @@ services:
       context: ./bot
       target: runtime
     environment: *bot-env
-    ports: ["8000:8000"]
+    ports: ["${IP_PORT_API:-18000}:8000"]
     depends_on:
       postgres: {condition: service_healthy}
       valkey: {condition: service_healthy}
@@ -59,7 +72,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
-    ports: ["5432:5432"]
+    ports: ["${IP_PORT_POSTGRES:-55432}:5432"]
 
   valkey:
     image: valkey/valkey:9.1.2-alpine
@@ -73,7 +86,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
-    ports: ["6379:6379"]
+    ports: ["${IP_PORT_VALKEY:-56379}:6379"]
 
   prometheus:
     image: prom/prometheus:v3.14.0
@@ -81,7 +94,7 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=15d"
-    ports: ["9090:9090"]
+    ports: ["${IP_PORT_PROMETHEUS:-19090}:9090"]
     depends_on: [api]
 
   alertmanager:
@@ -89,7 +102,7 @@ services:
     volumes: ["./monitoring/alertmanager:/etc/alertmanager:ro"]
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
-    ports: ["9093:9093"]
+    ports: ["${IP_PORT_ALERTMANAGER:-19093}:9093"]
 
 volumes:
   pgdata: {}

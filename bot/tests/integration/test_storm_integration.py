@@ -37,9 +37,13 @@ pytestmark = pytest.mark.integration
 
 BOT_DIR = Path(__file__).resolve().parents[2]
 FIXTURES = BOT_DIR / "tests" / "fixtures"
+# Default matches the port docker-compose publishes, not the container-internal
+# 5432 -- a developer who ran `docker compose up` should be able to run the
+# integration suite with no environment variables at all. CI overrides this
+# because Actions service containers publish on the standard port.
 DB_URL = os.environ.get(
     "IP_TEST_DATABASE_URL",
-    "postgresql+psycopg://ip:ip@localhost:5432/incidentpilot",
+    "postgresql+psycopg://ip:ip@127.0.0.1:55432/incidentpilot",
 )
 GRAPH = load_service_graph()
 

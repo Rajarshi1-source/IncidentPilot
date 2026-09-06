@@ -9,7 +9,7 @@
 # the week.
 set -euo pipefail
 
-DB_URL="${IP_TEST_DATABASE_URL:-postgresql+psycopg://ip:ip@localhost:5432/incidentpilot}"
+DB_URL="${IP_TEST_DATABASE_URL:-postgresql+psycopg://ip:ip@127.0.0.1:55432/incidentpilot}"
 BOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../bot" && pwd)"
 
 fail() { printf '\n\033[31mGATE G2: FAIL\033[0m - %s\n\n' "$1" >&2; exit 1; }
