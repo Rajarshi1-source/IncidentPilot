@@ -16,6 +16,7 @@ from fastapi import Depends, Request
 from incidentpilot.config.settings import Settings
 from incidentpilot.db.repositories import ChannelCache
 from incidentpilot.orchestration.streams import StreamClient, StreamProducer
+from incidentpilot.resilience.degradation import DegradationManager
 from incidentpilot.transcript.ingestor import TranscriptIngestor
 
 
@@ -69,6 +70,17 @@ def get_sessions(request: Request) -> Any:
     return request.app.state.sessions
 
 
+def get_degradation(request: Request) -> DegradationManager:
+    """The one degradation manager, built in the lifespan.
+
+    One instance, because the level is a property of the process rather than of
+    a request, and two managers with two opinions about the level would fight
+    over a single Prometheus gauge.
+    """
+    manager: DegradationManager = request.app.state.degradation
+    return manager
+
+
 def get_channels(request: Request) -> ChannelCache:
     """The one channel->incident cache, shared with the ingestor."""
     cache: ChannelCache = request.app.state.channels
@@ -81,3 +93,4 @@ StreamsDep = Annotated[StreamProducer, Depends(get_streams)]
 IngestorDep = Annotated[TranscriptIngestor, Depends(get_ingestor)]
 SessionsDep = Annotated[Any, Depends(get_sessions)]
 ChannelsDep = Annotated[ChannelCache, Depends(get_channels)]
+DegradationDep = Annotated[DegradationManager, Depends(get_degradation)]

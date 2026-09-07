@@ -20,6 +20,25 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "incidentpilot"
 # The single module allowed to import a chat adapter's write surface.
 RELAY = "orchestration/handlers.py"
 
+# The one documented exception, and the reason it has to be one.
+#
+# The degradation banner (W7-17, INV-12) is an external write, and every other
+# external write in this system goes through the transactional outbox. This one
+# cannot. The outbox is a *database table*, and degradation level 2 is "the
+# database is unreachable" -- so routing the announcement through it would mean
+# the notice that the database is down can only be delivered when the database
+# is up. That is the same circular dependency that makes `IncidentPilotDown`
+# bypass IncidentPilot, and it fails in the same direction: silently, on the one
+# occasion it matters.
+#
+# The trade it accepts is duplication rather than loss. Two processes changing
+# level could post two banners; the alternative is a system that degrades
+# without saying so, which INV-12 exists to forbid. A duplicate banner is
+# noise, an unannounced degradation is a lie -- so the write stays direct,
+# best-effort (it never raises, see `_post`), and listed here instead of
+# quietly excluded.
+DEGRADATION = "resilience/degradation.py"
+
 # Wiring is allowed to name an adapter (main.py constructs one); calling its
 # write methods is not. These are the methods that mutate the outside world.
 WRITE_METHODS: frozenset[str] = frozenset(
@@ -118,7 +137,7 @@ def test_no_module_outside_the_relay_calls_a_write_method() -> None:
     """
     violations: list[str] = []
     for rel, path in _modules():
-        if rel == RELAY or rel.startswith("adapters/chat/"):
+        if rel in (RELAY, DEGRADATION) or rel.startswith("adapters/chat/"):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
@@ -143,6 +162,47 @@ def test_no_module_outside_the_relay_calls_a_write_method() -> None:
     assert not violations, (
         "only orchestration/handlers.py may perform external chat writes (INV-03):\n  "
         + "\n  ".join(violations)
+    )
+
+
+def test_the_degradation_exception_stays_one_call() -> None:
+    """The exception above is bounded to a single, best-effort post.
+
+    An allowlist entry with no test is an allowlist entry that grows. This one
+    permits exactly one write method, called exactly once, inside a `try` --
+    adding `create_channel` to the degradation manager, or letting the post
+    raise, would fail here rather than passing on the strength of a comment.
+    """
+    path = SRC / DEGRADATION
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in WRITE_METHODS
+    ]
+    assert len(calls) == 1, f"the degradation exception permits one write call, found {len(calls)}"
+    only = calls[0].func
+    assert isinstance(only, ast.Attribute)
+    assert only.attr == "post_message", (
+        "the degradation manager may announce, not create channels or page"
+    )
+
+    guarded = any(
+        isinstance(handler, ast.Try)
+        and any(
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Attribute)
+            and inner.func.attr in WRITE_METHODS
+            for inner in ast.walk(handler)
+        )
+        for handler in ast.walk(tree)
+    )
+    assert guarded, (
+        "the announcement must not raise -- an exception here would abort the "
+        "degradation it was announcing and leave the system at the old level"
     )
 
 

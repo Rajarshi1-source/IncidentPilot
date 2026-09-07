@@ -1,0 +1,92 @@
+# The nightly eval (W7-15). Non-blocking by design.
+#
+# Two jobs the merge gate deliberately does not do.
+#
+# The first is a *full* replay with the report kept as an artifact, so there is
+# a dated series of the corpus's numbers rather than only the runs that happened
+# to touch a prompt. A regression that arrives through a dependency bump would
+# never trip the path filter, and this is what notices it.
+#
+# The second is the refresh check. Recordings age: a provider changes its output
+# shape, the responses in the corpus stop resembling what the model would say
+# today, and cost per PIR in eval drifts below production without anyone
+# noticing. This job does not fix that -- refreshing is a human procedure with a
+# credential, see ADR 0006 -- it reports how stale the corpus is so the decision
+# to refresh is made on a date rather than on a hunch.
+#
+# Non-blocking because a scheduled job that can fail the default branch fails it
+# at 3 a.m. for reasons nobody is awake to read, and a red main branch that
+# nobody caused teaches people that red means nothing.
+
+name: eval-nightly
+
+on:
+  schedule:
+    # 02:30 UTC, which is 08:00 IST -- the report is waiting rather than
+    # arriving mid-afternoon.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.12.10"
+  PYTHON_VERSION: "3.14.7"
+
+jobs:
+  full-corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --extra dev
+        working-directory: bot
+
+      - name: Replay the full corpus
+        run: |
+          uv run python -m eval.run --corpus eval/corpus \
+            --report ../eval-report.md --json ../eval-metrics.json
+        working-directory: bot
+
+      # The counterfactuals, run nightly because they are the evidence behind
+      # the two decisions this project has deferred: E-1 (which model) and the
+      # correlation window. Numbers that only exist when someone remembers to
+      # ask for them are numbers nobody has.
+      - name: Counterfactuals
+        run: |
+          echo "## correlation window 600s"
+          uv run python -m eval.run --corpus eval/corpus --set correlation.window_s=600 \
+            | tail -20
+          echo "## correlation effectively disabled"
+          uv run python -m eval.run --corpus eval/corpus --set correlation.merge_threshold=0.99 \
+            | tail -20
+        working-directory: bot
+
+      - name: Corpus staleness
+        run: |
+          uv run python - <<'PY'
+          import json, pathlib, subprocess
+          manifest = json.loads(pathlib.Path("eval/corpus/manifest.json").read_text())
+          age = subprocess.run(
+              ["git", "log", "-1", "--format=%cr", "--", "eval/corpus"],
+              capture_output=True, text=True, check=False).stdout.strip()
+          print(f"corpus last touched: {age or 'unknown'}")
+          print(f"recorded against prompt {manifest['corpus']['prompt_version']} "
+                f"({manifest['corpus']['prompt_sha256'][:12]})")
+          print("refresh with: uv run python -m eval.run --corpus eval/corpus --live")
+          PY
+        working-directory: bot
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-nightly-${{ github.run_number }}
+          path: |
+            eval-report.md
+            eval-metrics.json
+          retention-days: 90

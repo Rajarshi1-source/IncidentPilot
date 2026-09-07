@@ -244,6 +244,17 @@ class CitationValidator:
                     )
         return out
 
+    def supports(self, ref: str, claim_text: str, ctx: GroundedContext) -> bool:
+        """Public name for the support check.
+
+        The eval harness scores ``citation_precision`` as "exists AND supports",
+        which is this exact predicate -- and a harness reaching through a
+        leading underscore to compute the number the gate depends on would be
+        scoring an implementation detail. One name, two callers, no second
+        opinion about what "supported" means.
+        """
+        return self._supports(ref, claim_text, ctx)
+
     def _supports(self, ref: str, claim_text: str, ctx: GroundedContext) -> bool:
         """Does the cited artifact plausibly say what the claim says?
 

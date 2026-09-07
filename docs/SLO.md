@@ -43,6 +43,37 @@ detects a live ingestion failure quickly, which is what the SLO is for, and
 would not detect one message lost three hours ago. ADR 0003 records why, and
 what would change if the app were ever Marketplace-approved.
 
+## Alerting on these (added week 7)
+
+`monitoring/prometheus/rules/incidentpilot-slo.yml` implements every objective in
+the table above as multi-window, multi-burn-rate rules — 24 of them, validated by
+`promtool check rules` in CI.
+
+**Two windows, always.** A single-threshold alert on a 99.9 % objective has no
+useful setting: tight enough to catch a real burn and it fires on every
+five-minute blip; loose enough not to and it never fires. The long window says
+the problem is real, the short window says it is *still happening* — without the
+second, an alert keeps firing for an hour after the incident is fixed, which is
+how people learn to close alerts without reading them.
+
+The standard pair: 14.4× over 1 h / 5 m pages (2 % of a 30-day budget), 6× over
+6 h / 30 m raises a ticket (5 %).
+
+**Two rules deliberately break that pattern.** `CitationCoverageBelowOne` has no
+burn rate and no averaging window, because grounding is an invariant rather than
+a probabilistic target — there is no budget to burn. And `IncidentPilotDown`
+carries `route: fallback` so Alertmanager sends it straight to the paging
+provider and a fallback channel; if the only path to learning your incident tool
+is down runs through your incident tool, you have built a circular dependency
+(INV-11, guarded by `tests/unit/test_alertmanager_config.py`, backstopped
+out-of-band by the lifeboat CronJob).
+
+One alert exists because an SLO can be met while the feature is absent:
+`EverythingIsASkeleton` fires when more than half of PIRs degrade to layer 3.
+Delivery is technically green in that state, and the product is not there.
+
+---
+
 ### PIR grounding has a zero error budget
 
 Every other SLO here is probabilistic. This one is an **invariant**, enforced by

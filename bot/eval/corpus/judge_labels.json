@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "Human labels for ten incidents, scored against the same rubric the judge reads",
+    "(eval/judge/rubric.md). Ten rather than forty because the labelling is the",
+    "expensive part and a number backed by ten careful judgements is worth more than",
+    "one backed by forty rushed ones -- the honest limitation is stated in the report",
+    "rather than hidden by a larger n.",
+    "",
+    "The judge scores here are the ones the judge role produced on the same drafts.",
+    "They are recorded rather than recomputed on every run: the judge is the one",
+    "component in this harness that is not deterministic, and re-running it inside",
+    "the gate would make the gate non-deterministic to report a number it does not",
+    "gate on.",
+    "",
+    "Read the disagreements, not the rate. Incident 233 is where a person and the",
+    "judge diverge on root-cause reasonableness: the draft abstains, a person scores",
+    "the abstention 2 because nobody established a cause, and the judge scores it 1",
+    "because it read 'no hypothesis' as 'incomplete'. That is a real and instructive",
+    "failure -- a judge that penalises honest uncertainty would train the prompt",
+    "towards confident invention, which is the exact failure this project exists to",
+    "prevent."
+  ],
+  "rubric": "eval/judge/rubric.md",
+  "labels": {
+    "201": {
+      "human": {"coherence": 2, "root_cause": 2, "action_items": 2},
+      "judge": {"coherence": 2, "root_cause": 2, "action_items": 2}
+    },
+    "204": {
+      "human": {"coherence": 2, "root_cause": 2, "action_items": 1},
+      "judge": {"coherence": 2, "root_cause": 2, "action_items": 2}
+    },
+    "207": {
+      "human": {"coherence": 2, "root_cause": 1, "action_items": 2},
+      "judge": {"coherence": 2, "root_cause": 1, "action_items": 2}
+    },
+    "215": {
+      "human": {"coherence": 2, "root_cause": 2, "action_items": 2},
+      "judge": {"coherence": 2, "root_cause": 2, "action_items": 2}
+    },
+    "220": {
+      "human": {"coherence": 1, "root_cause": 1, "action_items": 2},
+      "judge": {"coherence": 2, "root_cause": 1, "action_items": 2}
+    },
+    "224": {
+      "human": {"coherence": 2, "root_cause": 2, "action_items": 1},
+      "judge": {"coherence": 2, "root_cause": 2, "action_items": 1}
+    },
+    "230": {
+      "human": {"coherence": 2, "root_cause": 2, "action_items": 2},
+      "judge": {"coherence": 2, "root_cause": 1, "action_items": 2}
+    },
+    "233": {
+      "human": {"coherence": 1, "root_cause": 2, "action_items": 1},
+      "judge": {"coherence": 1, "root_cause": 1, "action_items": 1}
+    },
+    "237": {
+      "human": {"coherence": 2, "root_cause": 1, "action_items": 1},
+      "judge": {"coherence": 2, "root_cause": 1, "action_items": 1}
+    },
+    "240": {
+      "human": {"coherence": 2, "root_cause": 2, "action_items": 2},
+      "judge": {"coherence": 2, "root_cause": 2, "action_items": 2}
+    }
+  }
+}

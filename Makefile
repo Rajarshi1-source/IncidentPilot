@@ -50,6 +50,28 @@ test-integration: ## Integration tests (needs a live Valkey)
 .PHONY: test-all
 test-all: test test-integration ## Everything
 
+# --- eval (W7) ----------------------------------------------------------------
+
+.PHONY: eval
+eval: ## Replay the 40-incident corpus and print the metrics
+	$(UV) run python -m eval.run --corpus eval/corpus
+
+.PHONY: eval-gate
+eval-gate: ## Replay and gate; exit 1 on regression, write the PR comment
+	$(UV) run python -m eval.run --corpus eval/corpus --gate --report ../eval-report.md
+
+.PHONY: eval-verbose
+eval-verbose: ## Replay with a per-incident trace (rejections, merges, drift)
+	$(UV) run python -m eval.run --corpus eval/corpus --verbose
+
+.PHONY: eval-record
+eval-record: ## Rebuild the corpus fixtures from eval/corpus/_generate.py
+	$(UV) run python -m eval.corpus._generate
+
+.PHONY: eval-counterfactual
+eval-counterfactual: ## Answer "what if" with evidence: make eval-counterfactual SET=correlation.window_s=600
+	$(UV) run python -m eval.run --corpus eval/corpus --set $(SET)
+
 # --- local stack --------------------------------------------------------------
 
 .PHONY: up
@@ -98,6 +120,10 @@ gate-g5: ## G5 — pager unreachable → cache → static rota → team channel,
 .PHONY: gate-g6
 gate-g6: ## G6 — provider blocked → skeleton in 90s; unblocked → zero uncited claims
 	@bash scripts/gate_g6.sh
+
+.PHONY: gate-g7
+gate-g7: ## G7 — replay under 30s with zero network; a prompt edit turns the gate red
+	@bash scripts/gate_g7.sh
 
 .PHONY: relay
 relay: ## Run the outbox relay (the only external writer)

@@ -53,12 +53,12 @@ packages = ["src/incidentpilot"]
 strict = true
 plugins = ["pydantic.mypy"]
 python_version = "3.14"
-files = ["src", "tests"]
+files = ["src", "tests", "eval"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py314"
-src = ["src", "tests"]
+src = ["src", "tests", "eval", "."]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF"]
@@ -72,6 +72,11 @@ ignore = ["N818"]
 [tool.ruff.lint.per-file-ignores]
 # Tests import fixtures and assert on internals; `assert` is the point.
 "tests/**" = ["S101"]
+# The corpus generator builds forty fixtures from one set of helpers, so the
+# module is long and its builders take many arguments by nature. Splitting it to
+# satisfy a complexity default would scatter the fixtures across files and make
+# the corpus harder to read, which is the opposite of the point.
+"eval/corpus/_generate.py" = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

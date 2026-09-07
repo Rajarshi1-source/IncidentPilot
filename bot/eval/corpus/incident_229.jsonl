@@ -1,0 +1,13 @@
+{"bucket": "provider_failure", "format": 1, "incident": 229, "start": "2026-09-01T03:12:00Z", "title": "total during PIR generation"}
+{"kind": "alert", "payload": {"annotations": {"summary": "HighErrorRate on catalog-api"}, "endsAt": "0001-01-01T00:00:00Z", "generatorURL": "http://prometheus:9090/graph", "labels": {"alertname": "HighErrorRate", "cluster": "prod-ap-south-1", "instance": "10.42.0.0:9090", "namespace": "payments", "pod": "catalog-api-00000", "service": "catalog-api", "severity": "critical"}, "startsAt": "2026-09-01T03:12:00Z", "status": "firing"}, "t": 0}
+{"kind": "paging.oncall", "request": {"schedule": "payments"}, "response": {"source": "provider", "user": "U_PRIMARY"}, "t": 2}
+{"kind": "chat.event.message", "payload": {"text": "looking at catalog-api now", "ts": "1788232365.004500", "user": "U_PRIMARY"}, "t": 45}
+{"kind": "chat.event.message", "payload": {"text": "catalog-api is back to normal", "ts": "1788233120.080000", "user": "U_PRIMARY"}, "t": 800}
+{"kind": "chat.event.message", "payload": {"text": "we should retry the draft against the second provider", "ts": "1788233270.095000", "user": "U_SECOND"}, "t": 950}
+{"kind": "promql", "query": "sum(increase(http_requests_total{service=\"catalog-api\",status=~\"5..\"}[26m]))", "response": {"value": 980.0}, "t": 1500.0}
+{"kind": "promql", "query": "sum(increase(http_requests_total{service=\"catalog-api\"}[26m]))", "response": {"value": 44000.0}, "t": 1500.0}
+{"kind": "promql", "query": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{service=\"catalog-api\"}[26m]))) * 1000", "response": {"value": 2100.0}, "t": 1500.0}
+{"kind": "promql", "query": "count(kube_pod_status_ready{condition=\"false\",namespace=\"default\"})", "response": {"value": 1.0}, "t": 1500.0}
+{"kind": "llm", "prompt_sha256": "8646196fbe3778c23afb0f15194744b76810d221f9a85159deb1feb8ab4c5d3a", "request": {"system": "<redacted at capture>", "user": "<redacted at capture>"}, "response": {"error": "connection refused", "latency_ms": 800, "retryable": true}, "role": "synthesize", "t": 1520}
+{"kind": "llm", "prompt_sha256": "8646196fbe3778c23afb0f15194744b76810d221f9a85159deb1feb8ab4c5d3a", "request": {"system": "<redacted at capture>", "user": "<redacted at capture>"}, "response": {"error": "connection refused", "latency_ms": 800, "retryable": true}, "role": "synthesize", "t": 1521}
+{"t": 1500.1, "kind": "ground_truth", "labels": {"service": "catalog-api", "severity": "sev1", "expects_pir": true, "expected_incidents": 1, "timeline": [{"t": 45, "intent": "investigation"}, {"t": 800, "intent": "recovery_signal"}], "action_items": ["retry the draft against the second provider"], "expected_layer": "skeleton", "resolved_t": 1500.0}}

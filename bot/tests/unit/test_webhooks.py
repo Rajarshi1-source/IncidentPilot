@@ -41,7 +41,9 @@ def test_alertmanager_good_bearer_202_and_entry_on_stream(
         json=alertmanager_payload,
     )
     assert res.status_code == 202
-    assert res.json() == {"accepted": 2, "rejected": 0}
+    # `buffered` reports the brownout write-ahead path (W7-19): zero on the
+    # healthy path, and the count when the primary stream refused.
+    assert res.json() == {"accepted": 2, "rejected": 0, "buffered": 0}
 
     entries = fake_valkey.entries("alerts.raw")
     assert len(entries) == 2
@@ -82,7 +84,7 @@ def test_one_malformed_alert_does_not_reject_the_batch(
         json=payload,
     )
     assert res.status_code == 202
-    assert res.json() == {"accepted": 2, "rejected": 1}
+    assert res.json() == {"accepted": 2, "rejected": 1, "buffered": 0}
     assert len(fake_valkey.entries("alerts.raw")) == 2
 
 

@@ -1,0 +1,80 @@
+{
+  "baseline": {
+    "action_item_recall": 0.8625,
+    "citation_precision": 1.0,
+    "cost_per_pir_usd": 0.0048,
+    "prompt_version": "2.1.0",
+    "storm_compression": 1.0,
+    "timeline_f1": 0.9667
+  },
+  "corpus": {
+    "buckets": {
+      "abandoned": [
+        222,
+        223
+      ],
+      "adversarial": [
+        239,
+        240
+      ],
+      "code_switched": [
+        233,
+        234,
+        235,
+        236
+      ],
+      "flapping": [
+        217,
+        218,
+        219
+      ],
+      "metrics_unavailable": [
+        224,
+        225,
+        226
+      ],
+      "provider_failure": [
+        227,
+        228,
+        229
+      ],
+      "real": [
+        201,
+        202,
+        203,
+        204,
+        205,
+        206,
+        207,
+        208,
+        209,
+        210,
+        211,
+        212
+      ],
+      "reopened": [
+        220,
+        221
+      ],
+      "storm": [
+        213,
+        214,
+        215,
+        216
+      ],
+      "unknown_root_cause": [
+        230,
+        231,
+        232
+      ],
+      "very_long": [
+        237,
+        238
+      ]
+    },
+    "format": 1,
+    "n": 40,
+    "prompt_sha256": "8646196fbe3778c23afb0f15194744b76810d221f9a85159deb1feb8ab4c5d3a",
+    "prompt_version": "2.1.0"
+  }
+}

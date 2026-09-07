@@ -47,6 +47,18 @@ jobs:
               - 'bot/src/incidentpilot/pir/prompts/**'
               - 'bot/src/incidentpilot/config/models.yaml'
               - 'bot/eval/**'
+              # Wider than the reference's three paths, deliberately. These are
+              # the modules whose behaviour the eval metrics actually measure:
+              # the validator decides citation_precision, the context builds the
+              # set that decides fabricated_citations, and impact decides which
+              # numbers a claim may contain. A change to any of them moves the
+              # gate's numbers, so a filter that excluded them would let the
+              # most consequential edits past the one check that would notice.
+              - 'bot/src/incidentpilot/pir/validator.py'
+              - 'bot/src/incidentpilot/pir/context.py'
+              - 'bot/src/incidentpilot/pir/schema.py'
+              - 'bot/src/incidentpilot/impact/**'
+              - 'bot/src/incidentpilot/domain/evidence.py'
             dashboard:
               - 'dashboard/**'
             config:
@@ -210,6 +222,55 @@ jobs:
           IP_TEST_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
           IP_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
 
+  # B-11, discharged. Rev 1 shipped an eval job gated on
+  # `github.event.head_commit.modified` -- only populated on push, absent on
+  # pull requests, and a list, so `contains()` tested exact element equality and
+  # was false essentially always. That job never executed once, which is worse
+  # than having no gate: everyone believed there was one.
+  #
+  # This is the fix, and the fix is only real if it goes red. G7's acceptance
+  # criterion is a screenshot of exactly that: edit one word of
+  # pir_v2_1_0.md, open a PR, and this job fails on `prompt_drift` with the
+  # sticky comment naming the prompt.
+  eval-gate:
+    needs: [changes, test]
+    if: needs.changes.outputs.prompts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --extra dev
+        working-directory: bot
+
+      # No services block, and that is the point rather than an omission. The
+      # replay runs entirely in memory against fake adapters, so it needs no
+      # Postgres, no Valkey, no credentials and no network -- INV-10 is
+      # asserted by a socket guard inside the run, and `network calls 0` is a
+      # row in the report below.
+      - name: Replay the corpus and gate on it
+        run: uv run python -m eval.run --corpus eval/corpus --gate --report ../eval-report.md
+        working-directory: bot
+
+      # Uploaded even when the gate failed: the report IS the failure message,
+      # and a reviewer who has to reproduce the run locally to find out which
+      # metric moved will stop reading the gate.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report.md
+
+      - name: Post the metric table on the PR
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: eval-report.md
+
   # Config lives outside bot/, so it gets its own trigger. INV-11 is a property
   # of a YAML file, and a comment in a YAML file survives exactly until someone
   # reorganizes the routing tree.
@@ -230,6 +291,14 @@ jobs:
       - name: INV-11 - the down-alert must not route through us
         run: uv run pytest tests/unit/test_alertmanager_config.py -q
         working-directory: bot
+
+      # W7-21. The burn-rate rules are the alerting half of docs/SLO.md, and a
+      # rule file with a typo in a PromQL expression loads silently and never
+      # fires -- the same shape of failure as the eval job that never ran.
+      # promtool parses every expression, so a broken rule is a build failure.
+      - name: Prometheus rules are valid
+        run: |
+          docker run --rm -v "$PWD/monitoring/prometheus/rules:/rules:ro"             --entrypoint promtool prom/prometheus:v3.14.0             check rules /rules/incidentpilot-slo.yml
 
       - name: Alertmanager config is valid
         run: |

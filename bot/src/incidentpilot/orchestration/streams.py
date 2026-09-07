@@ -16,7 +16,10 @@ from collections.abc import Awaitable
 from typing import Any, Protocol, runtime_checkable
 
 from incidentpilot.domain.normalize import NormalizedAlert, to_stream_fields
+from incidentpilot.telemetry.logging import get_logger
 from incidentpilot.telemetry.tracing import carrier_for_stream
+
+log = get_logger(__name__)
 
 
 class StreamPipeline(Protocol):
@@ -63,6 +66,16 @@ class StreamClient(Protocol):
     def ping(self) -> Awaitable[Any]: ...
 
     def pipeline(self, transaction: bool = ...) -> StreamPipeline: ...
+
+    # The three the brownout drain needs (W7-19). Added to the Protocol rather
+    # than reached for with getattr: the WAL replay is a correctness path, and a
+    # fake that does not implement it should fail to type-check rather than
+    # fail at 3 a.m.
+    def xrange(self, name: str, *, count: int | None = ...) -> Awaitable[Any]: ...
+
+    def xdel(self, name: str, *ids: Any) -> Awaitable[Any]: ...
+
+    def xlen(self, name: str) -> Awaitable[Any]: ...
 
 
 class StreamProducer:
@@ -144,6 +157,46 @@ class StreamProducer:
         is why ingest is the one AP component in an otherwise CP system.
         """
         return await self.publish(alert, stream=self.wal_stream)
+
+    async def replay_wal(self, *, batch: int = 500) -> int:
+        """Drain the brownout buffer back onto the primary stream (W7-19).
+
+        **In order, and only on success.** Each entry is republished and then
+        deleted, so a crash mid-drain replays a handful of alerts twice rather
+        than losing them -- and the incident dedup key makes the duplicate
+        harmless while the loss would not be. Deleting first would be faster and
+        would silently drop whatever was in flight when the process died, which
+        is the failure the buffer existed to prevent.
+
+        Batched because a long brownout can leave thousands of entries, and
+        draining them in one read would hold the whole backlog in memory on a
+        process that has just recovered from being unhealthy.
+        """
+        entries: list[Any] = await self._client.xrange(self.wal_stream, count=batch)
+        if not entries:
+            return 0
+
+        replayed = 0
+        for entry_id, fields in entries:
+            decoded = {
+                (k.decode() if isinstance(k, bytes) else str(k)): (
+                    v.decode() if isinstance(v, bytes) else str(v)
+                )
+                for k, v in dict(fields).items()
+            }
+            await self._client.xadd(self.raw_stream, decoded, maxlen=self._maxlen, approximate=True)
+            await self._client.xdel(self.wal_stream, entry_id)
+            replayed += 1
+
+        log.info("wal.replayed", count=replayed, stream=self.wal_stream)
+        return replayed
+
+    async def wal_depth(self) -> int:
+        """How much is still buffered. Surfaced so a brownout is visible, not inferred."""
+        try:
+            return int(await self._client.xlen(self.wal_stream))
+        except Exception:
+            return 0
 
     async def ping(self) -> bool:
         """Readiness probe support."""

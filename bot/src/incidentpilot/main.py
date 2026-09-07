@@ -28,6 +28,7 @@ from incidentpilot.db import repositories as repo
 from incidentpilot.db.engine import build_engine, build_session_factory
 from incidentpilot.orchestration.orchestrator import Orchestrator
 from incidentpilot.orchestration.streams import StreamClient, StreamProducer
+from incidentpilot.resilience.degradation import DegradationManager
 from incidentpilot.runbooks.library import build_library
 from incidentpilot.runtime import configure_event_loop
 from incidentpilot.telemetry.logging import configure_logging, get_logger, reset_context
@@ -109,6 +110,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not hasattr(app.state, "sessions"):
         app.state.sessions = build_session_factory(build_engine(cfg))
 
+    # One degradation manager per process (W7-17, INV-12). The level is a
+    # property of the process, and two managers with two opinions would fight
+    # over a single Prometheus gauge.
+    if not hasattr(app.state, "degradation"):
+        app.state.degradation = DegradationManager(ops_channel=cfg.ops_channel_id)
+
     # One channel->incident cache for the whole process. The ingestor and the
     # slash commands must resolve a war room the same way; two caches would
     # eventually disagree in a way nobody could reproduce.
@@ -176,6 +183,7 @@ def create_app(
     channels: Any = None,
     runbooks: Any = None,
     orchestrator: Any = None,
+    degradation: Any = None,
 ) -> FastAPI:
     """Build the application.
 
@@ -204,6 +212,8 @@ def create_app(
         app.state.ingestor = ingestor
     if channels is not None:
         app.state.channels = channels
+    if degradation is not None:
+        app.state.degradation = degradation
     if runbooks is not None:
         app.state.runbooks = runbooks
     if orchestrator is not None:

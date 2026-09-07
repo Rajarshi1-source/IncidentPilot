@@ -12,12 +12,18 @@ import json
 
 from fastapi import APIRouter, Header, Request, Response, status
 
-from incidentpilot.api.deps import SettingsDep, StreamsDep, elapsed_s
+from incidentpilot.api.deps import DegradationDep, SettingsDep, StreamsDep, elapsed_s
 from incidentpilot.api.security import Unauthorized, verify_bearer
-from incidentpilot.domain.normalize import MalformedPayload, normalize_alertmanager
+from incidentpilot.domain.normalize import (
+    MalformedPayload,
+    NormalizedAlert,
+    normalize_alertmanager,
+)
+from incidentpilot.resilience.degradation import Level
 from incidentpilot.telemetry.logging import get_logger
 from incidentpilot.telemetry.metrics import (
     ALERTS_ACCEPTED,
+    BROWNOUT_BUFFERED,
     WEBHOOK_LATENCY,
     WEBHOOK_REJECTED,
 )
@@ -34,6 +40,7 @@ async def receive(
     response: Response,
     settings: SettingsDep,
     streams: StreamsDep,
+    degradation: DegradationDep,
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
     """Accept an Alertmanager v4 payload.
@@ -92,8 +99,18 @@ async def receive(
             WEBHOOK_REJECTED.labels(source=SOURCE, reason="malformed_alert").inc()
             log.warning("webhook.alert_rejected", source=SOURCE, error=str(exc))
 
+    buffered = 0
     if normalized:
-        await streams.publish_many(normalized)
+        buffered = await _accept(normalized, streams, degradation)
+        if buffered < 0:
+            # Neither the primary stream nor the WAL took it. A 202 here would
+            # be a lie -- the contract is "durably accepted" -- and a lie at
+            # this boundary is unrecoverable, because Alertmanager will not
+            # resend an alert it believes we have.
+            WEBHOOK_REJECTED.labels(source=SOURCE, reason="stream_unavailable").inc()
+            WEBHOOK_LATENCY.labels(source=SOURCE, outcome="unavailable").observe(elapsed_s(request))
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+            return {"detail": "alert stream unavailable"}
         for alert in normalized:
             ALERTS_ACCEPTED.labels(source=SOURCE, status=str(alert.status)).inc()
 
@@ -104,5 +121,44 @@ async def receive(
         accepted=len(normalized),
         rejected=rejected,
         group_key=payload.get("groupKey"),
+        buffered=buffered,
     )
-    return {"accepted": len(normalized), "rejected": rejected}
+    return {"accepted": len(normalized), "rejected": rejected, "buffered": buffered}
+
+
+async def _accept(
+    alerts: list[NormalizedAlert],
+    streams: StreamsDep,
+    degradation: DegradationDep,
+) -> int:
+    """Publish, or buffer to the write-ahead stream. Returns rows buffered, -1 if lost.
+
+    The brownout path (W7-19, D7 L2). The reasoning is one asymmetry: **a
+    dropped alert is unrecoverable, a delayed alert is not.** That is why ingest
+    is the one AP component in an otherwise CP system, and why this falls
+    forward into a buffer rather than back into a 500.
+
+    The WAL is a different stream, not a retry of the same one. Retrying
+    ``alerts.raw`` when ``alerts.raw`` is what failed is a loop; ``alerts.wal``
+    is drained by ``replay_wal`` on recovery, in order, which is what makes the
+    delay recoverable rather than merely tolerated.
+
+    Note what does *not* happen here: no local disk spool. A file on the API
+    pod's filesystem is not durable -- the pod is the thing most likely to be
+    replaced during the outage that filled it -- and a buffer that loses data on
+    reschedule is a buffer that lies about the 202 it licensed.
+    """
+    try:
+        await streams.publish_many(alerts)
+    except Exception as exc:
+        log.warning("webhook.primary_stream_failed", source=SOURCE, error=str(exc)[:200])
+        try:
+            for alert in alerts:
+                await streams.buffer_wal(alert)
+        except Exception as wal_exc:
+            log.error("webhook.wal_failed", source=SOURCE, error=str(wal_exc)[:200])
+            return -1
+        BROWNOUT_BUFFERED.inc(len(alerts))
+        await degradation.set_level(Level.BROWNOUT, f"alert stream unavailable: {exc}")
+        return len(alerts)
+    return 0

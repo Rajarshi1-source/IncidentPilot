@@ -23,6 +23,7 @@ provider at the network level still yields a posted document (G6).
 
 from __future__ import annotations
 
+import inspect
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -107,22 +108,43 @@ class PIRGenerator:
         validator: CitationValidator | None = None,
         prompt: Prompt | None = None,
         now: Any = None,
+        context_loader: Any = None,
     ) -> None:
         self._router = router
         self._metrics = metrics
         self._validator = validator or CitationValidator()
         self._prompt = prompt
         self._now = now or (lambda: datetime.now(UTC))
+        # The one seam the replay harness needs (W7-05). Production loads the
+        # context from six queries; the harness assembles the identical object
+        # from a recording, because a Postgres connection is a socket and INV-10
+        # forbids one. A constructor argument rather than a subclass or a
+        # patched module, for the same reason ``now`` is: the injected shape is
+        # the shape the tests already exercise, so the seam is not a special
+        # path that only the harness walks.
+        self._context_loader = context_loader
 
     def prompt(self) -> Prompt:
         if self._prompt is None:
             self._prompt = get_prompt("synthesize")
         return self._prompt
 
-    async def generate(self, session: AsyncSession, incident_id: int) -> PIRResult:
+    async def generate(self, session: AsyncSession | None, incident_id: int) -> PIRResult:
         started = time.perf_counter()
 
-        ctx = await build_grounded_context(session, incident_id)
+        # `session` is None only when a context_loader was injected -- the
+        # harness assembles the context from a recording and never touches a
+        # database. The default loader needs a real session, so the two are
+        # checked together rather than trusting the caller to pair them.
+        if self._context_loader is None:
+            if session is None:
+                raise ValueError(
+                    "generate() needs a session, or a context_loader that does not use one"
+                )
+            ctx = await build_grounded_context(session, incident_id)
+        else:
+            loaded = self._context_loader(session, incident_id)
+            ctx = await loaded if inspect.isawaitable(loaded) else loaded
         impact = await self._impact(ctx)
         ctx.attach_impact(impact)
 

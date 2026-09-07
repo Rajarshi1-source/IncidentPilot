@@ -1,0 +1,342 @@
+# Multi-window, multi-burn-rate SLO alerting (W7-21, §15.3).
+#
+# The rules docs/SLO.md promised in week 1. Written against the metric names in
+# telemetry/metrics.py, which are a stable API for exactly this reason -- a
+# rename here is a silently broken alert, so `test_metric_names_stable`
+# snapshots them.
+#
+# WHY TWO WINDOWS, ALWAYS. A single-threshold alert on a 99.9% objective has no
+# useful setting. Tight enough to catch a real burn and it fires on every
+# five-minute blip; loose enough not to and it never fires at all. The pair is
+# what separates "we are consuming budget fast" from "we consumed some budget
+# once": the long window says the problem is real, the short window says it is
+# still happening. Without the short window an alert keeps firing for an hour
+# after the incident is fixed, which is how people learn to close alerts without
+# reading them.
+#
+# The burn-rate multipliers are the standard SRE-workbook pair:
+#   14.4x over 1h/5m   -> 2% of a 30-day budget, page
+#    6x   over 6h/30m  -> 5% of a 30-day budget, ticket
+#
+# Alertmanager routing for these lives in monitoring/alertmanager/alertmanager.yml.
+# IncidentPilotDown carries `route: fallback` and MUST NOT be routed through
+# IncidentPilot -- if the only path to learning your incident tool is down runs
+# through your incident tool, you have built a circular dependency, and it is the
+# first thing a good reviewer checks (INV-11, guarded by
+# tests/unit/test_alertmanager_config.py).
+
+groups:
+  # --- recording rules -------------------------------------------------------
+  #
+  # The ratios are recorded rather than computed inline in every alert. Three
+  # alerts sharing one definition of "error ratio" is one definition; three
+  # copies of the expression is three, and they drift.
+  - name: incidentpilot-sli
+    interval: 30s
+    rules:
+      - record: ip:ingest_error_ratio:rate5m
+        expr: |
+          sum(rate(ip_webhook_seconds_count{outcome=~"unavailable|error"}[5m]))
+            /
+          clamp_min(sum(rate(ip_webhook_seconds_count[5m])), 1e-9)
+
+      - record: ip:ingest_error_ratio:rate30m
+        expr: |
+          sum(rate(ip_webhook_seconds_count{outcome=~"unavailable|error"}[30m]))
+            /
+          clamp_min(sum(rate(ip_webhook_seconds_count[30m])), 1e-9)
+
+      - record: ip:ingest_error_ratio:rate1h
+        expr: |
+          sum(rate(ip_webhook_seconds_count{outcome=~"unavailable|error"}[1h]))
+            /
+          clamp_min(sum(rate(ip_webhook_seconds_count[1h])), 1e-9)
+
+      - record: ip:ingest_error_ratio:rate6h
+        expr: |
+          sum(rate(ip_webhook_seconds_count{outcome=~"unavailable|error"}[6h]))
+            /
+          clamp_min(sum(rate(ip_webhook_seconds_count[6h])), 1e-9)
+
+      # clamp_min on every denominator. A quiet cluster produces 0/0 = NaN,
+      # comparisons against NaN are false, and the alert silently stops
+      # evaluating -- which looks exactly like everything being fine.
+      - record: ip:pir_failure_ratio:rate1h
+        expr: |
+          sum(rate(ip_pir_seconds_count{outcome!="ok"}[1h]))
+            /
+          clamp_min(sum(rate(ip_pir_seconds_count[1h])), 1e-9)
+
+      - record: ip:pir_failure_ratio:rate6h
+        expr: |
+          sum(rate(ip_pir_seconds_count{outcome!="ok"}[6h]))
+            /
+          clamp_min(sum(rate(ip_pir_seconds_count[6h])), 1e-9)
+
+      - record: ip:skeleton_ratio:rate1h
+        expr: |
+          sum(rate(ip_pir_seconds_count{layer="skeleton"}[1h]))
+            /
+          clamp_min(sum(rate(ip_pir_seconds_count[1h])), 1e-9)
+
+      - record: ip:time_to_war_room:p95_30m
+        expr: |
+          histogram_quantile(
+            0.95, sum by (le) (rate(ip_time_to_war_room_seconds_bucket[30m])))
+
+      - record: ip:webhook_latency:p99_5m
+        expr: |
+          histogram_quantile(
+            0.99, sum by (le) (rate(ip_webhook_seconds_bucket[5m])))
+
+  # --- ingest availability: 99.9% -------------------------------------------
+  - name: incidentpilot-ingest-slo
+    rules:
+      - alert: IngestErrorBudgetFastBurn
+        expr: |
+          ip:ingest_error_ratio:rate1h > (14.4 * 0.001)
+            and
+          ip:ingest_error_ratio:rate5m > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: page
+          slo: ingest_availability
+        annotations:
+          summary: "Ingest is burning its error budget 14.4x too fast"
+          description: >-
+            2% of the 30-day ingest error budget will be gone within an hour at
+            this rate. Alerts are being rejected at the trust boundary or the
+            stream is refusing writes; check ip_webhook_rejected_total by reason
+            and ip_brownout_buffered_total before looking anywhere else.
+          runbook: https://github.com/OWNER/IncidentPilot/blob/main/docs/FMEA.md
+
+      - alert: IngestErrorBudgetSlowBurn
+        expr: |
+          ip:ingest_error_ratio:rate6h > (6 * 0.001)
+            and
+          ip:ingest_error_ratio:rate30m > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: ticket
+          slo: ingest_availability
+        annotations:
+          summary: "Ingest is burning its error budget 6x too fast"
+          description: >-
+            5% of the 30-day budget over six hours. Not worth waking someone,
+            worth fixing this week.
+
+      - alert: IngestLatencySLOBreached
+        expr: ip:webhook_latency:p99_5m > 0.25
+        for: 10m
+        labels:
+          severity: ticket
+          slo: ingest_latency
+        annotations:
+          summary: "Webhook p99 above the 250ms objective"
+          description: >-
+            The 202 contract is "durably accepted", so this is queue or stream
+            latency rather than orchestration -- nothing slow is supposed to
+            happen before the response.
+
+  # --- the SLI with a zero error budget --------------------------------------
+  - name: incidentpilot-grounding-slo
+    rules:
+      # No burn rate, no multi-window, no `for: 15m`. Grounding is an invariant
+      # enforced by a deterministic validator, not a probabilistic target -- so
+      # there is no budget to burn and nothing to average over. One minute below
+      # 1.0 is a page.
+      - alert: CitationCoverageBelowOne
+        expr: ip_pir_citation_coverage < 1
+        for: 1m
+        labels:
+          severity: page
+          slo: pir_grounding
+        annotations:
+          summary: "A published PIR carries an uncited claim"
+          description: >-
+            The grounding invariant has a zero error budget. Either the
+            validator has been bypassed or a draft was published without
+            passing it. Note that the skeleton reports 0.0 deliberately (it
+            makes no cited claims), so check ip_pir_seconds{layer} first --
+            a run of skeletons is the degradation alert below, not this one.
+
+      - alert: ValidationRejectionSpike
+        expr: |
+          sum(rate(ip_pir_validation_failures_total[30m])) > 0.05
+        for: 15m
+        labels:
+          severity: ticket
+          slo: pir_grounding
+        annotations:
+          summary: "The citation validator is rejecting drafts unusually often"
+          description: >-
+            Check the `reason` label before blaming the model. A spike in
+            `unsupported` is usually the support threshold being too strict
+            after a change, and a false rejection pushes honest drafts to the
+            skeleton -- which looks like the model being bad rather than the
+            gate being wrong.
+
+  # --- PIR delivery: 99.5% ---------------------------------------------------
+  - name: incidentpilot-pir-slo
+    rules:
+      - alert: PIRDeliveryFastBurn
+        expr: |
+          ip:pir_failure_ratio:rate1h > (14.4 * 0.005)
+            and
+          ip:pir_failure_ratio:rate6h > (6 * 0.005)
+        for: 10m
+        labels:
+          severity: page
+          slo: pir_delivery
+        annotations:
+          summary: "PIRs are failing to deliver at any layer"
+          description: >-
+            The fallback chain terminates in the skeleton, which needs no vendor
+            and no network -- so a delivery failure means something below the
+            model layer is broken, not the provider.
+
+      - alert: EverythingIsASkeleton
+        expr: ip:skeleton_ratio:rate1h > 0.5
+        for: 20m
+        labels:
+          severity: ticket
+          slo: pir_delivery
+        annotations:
+          summary: "More than half of PIRs are degrading to the skeleton"
+          description: >-
+            Delivery is technically meeting its SLO while the feature is
+            effectively absent, which is why this is its own alert. Usual causes,
+            in order: the budget breaker tripped, every provider is failing, or a
+            validator change is over-rejecting.
+
+  # --- degradation and cost --------------------------------------------------
+  - name: incidentpilot-degradation
+    rules:
+      - alert: DegradationLevelElevated
+        expr: ip_degradation_level >= 2
+        for: 5m
+        labels:
+          severity: page
+          slo: availability
+        annotations:
+          summary: "IncidentPilot is in brownout or worse"
+          description: >-
+            Level 2 means the database is unreachable and alerts are buffering to
+            alerts.wal. Ingest is still accepting -- a dropped alert is
+            unrecoverable and a delayed one is not -- but nothing is being
+            orchestrated. Check the WAL depth before restarting anything.
+
+      - alert: DegradationLevelDegraded
+        expr: ip_degradation_level == 1
+        for: 30m
+        labels:
+          severity: ticket
+          slo: availability
+        annotations:
+          summary: "AI drafting has been unavailable for half an hour"
+
+      - alert: BudgetBreakerTripping
+        expr: sum(increase(ip_budget_trips_total[1h])) > 3
+        for: 5m
+        labels:
+          severity: ticket
+          slo: cost
+        annotations:
+          summary: "The LLM budget breaker is tripping repeatedly"
+          description: >-
+            A tripped budget degrades to the skeleton rather than blocking, so
+            this is a cost signal and not an availability one. Check
+            ip_llm_cost_usd_total by role before raising the ceiling.
+
+      - alert: CostPerIncidentAboveObjective
+        expr: |
+          sum(increase(ip_llm_cost_usd_total[24h]))
+            /
+          clamp_min(sum(increase(ip_transitions_total{to_state="detected"}[24h])), 1)
+          > 0.50
+        for: 1h
+        labels:
+          severity: ticket
+          slo: cost
+        annotations:
+          summary: "Cost per incident is above the $0.50 objective"
+          description: >-
+            Settle it with evidence rather than by switching models on a price
+            list: replay the corpus with
+            `--set roles.synthesize.model=<candidate>` and compare quality and
+            cost on this project's own fixtures.
+
+  # --- the SLI nobody else has ----------------------------------------------
+  - name: incidentpilot-transcript
+    rules:
+      # The bot can be 100% up and still have silently dropped three messages,
+      # after which every citation points into a transcript with holes in it and
+      # nothing reports an error. Availability of a data-collection system is
+      # measured in data, not in HTTP 200s.
+      #
+      # NaN is the "not yet measured" state, published deliberately on a fresh
+      # pod (see mark_transcript_ratio_unmeasured). Comparisons against NaN are
+      # false, so this rule does not fire before the first reconcile pass --
+      # which is exactly the intent, and the reason a fresh deploy does not page.
+      - alert: TranscriptCompletenessBelowObjective
+        expr: ip_transcript_completeness < 0.9999
+        for: 15m
+        labels:
+          severity: page
+          slo: transcript_completeness
+        annotations:
+          summary: "The transcript is missing messages"
+          description: >-
+            Measured as a sample of one channel's newest page per pass (ADR
+            0003), so this detects a live ingestion failure rather than a message
+            lost three hours ago. Check ip_messages_stored_total and the Slack
+            event backlog.
+
+      # INV-02 as a time series. The unit test proves it for the code that
+      # exists; this proves it for the code that is running.
+      - alert: HistoryCalledOffTheReconciler
+        expr: sum by (caller) (increase(ip_slack_history_calls_total{caller!="reconciler"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: page
+          slo: transcript_completeness
+        annotations:
+          summary: "conversations.history was called from the hot path"
+          description: >-
+            B-01. Slack allows one history call per minute workspace-wide, so a
+            hot-path caller starves the reconciler and silently shortens every
+            transcript. The reconciler is the only permitted caller.
+
+  # --- the platform itself ---------------------------------------------------
+  - name: incidentpilot-meta
+    rules:
+      - alert: IncidentPilotDown
+        expr: up{job="incidentpilot-api"} == 0
+        for: 1m
+        labels:
+          severity: page
+          # MUST bypass IncidentPilot. See the header, INV-11, and the lifeboat
+          # CronJob, which is the out-of-band backstop for this same condition.
+          route: fallback
+        annotations:
+          summary: "IncidentPilot is down"
+          description: >-
+            This alert must not be routed through IncidentPilot. If it is, the
+            notification path for "the incident tool is down" depends on the
+            incident tool. The lifeboat posts to the fallback channel within
+            120s of total unavailability, from an image that shares no code with
+            the bot.
+
+      - alert: StreamBacklogGrowing
+        expr: sum by (stream) (ip_stream_pending) > 1000
+        for: 10m
+        labels:
+          severity: ticket
+          slo: availability
+        annotations:
+          summary: "The consumer group is falling behind"
+          description: >-
+            This gauge is also the HPA's scaling signal, so sustained growth
+            means either the workers cannot keep up or they are not scaling.
+            Queue depth rather than CPU, because a worker blocked on a slow
+            external call uses no CPU at all.

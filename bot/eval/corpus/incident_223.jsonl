@@ -1,0 +1,5 @@
+{"bucket": "abandoned", "format": 1, "incident": 223, "start": "2026-09-01T03:12:00Z", "title": "nobody engaged with notifications"}
+{"kind": "alert", "payload": {"annotations": {"summary": "PodNotReady on notifications"}, "endsAt": "0001-01-01T00:00:00Z", "generatorURL": "http://prometheus:9090/graph", "labels": {"alertname": "PodNotReady", "cluster": "prod-ap-south-1", "instance": "10.42.0.0:9090", "namespace": "payments", "pod": "notifications-00000", "service": "notifications", "severity": "warning"}, "startsAt": "2026-09-01T03:12:00Z", "status": "firing"}, "t": 0}
+{"kind": "paging.oncall", "request": {"schedule": "platform"}, "response": {"source": "provider", "user": "U_PRIMARY"}, "t": 2}
+{"kind": "chat.conversations.create", "request": {"name": "inc-2026-09-01-notifications"}, "response": {"channel": {"id": "C000223"}}, "t": 5}
+{"t": 7200.1, "kind": "ground_truth", "labels": {"service": "notifications", "severity": "sev3", "expects_pir": false, "expected_incidents": 1, "timeline": [], "action_items": [], "resolved_t": 7200.0}}

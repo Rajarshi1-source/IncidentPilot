@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     channel_cache_ttl_s: int = 6 * 3600
     intent_layer2_enabled: bool = True
 
+    # --- degradation (W7-17, INV-12) -------------------------------------
+    # Where the level-change banner is posted. Unset means the banner has
+    # nowhere to go, and `DegradationManager` reports that as an *unannounced*
+    # degradation rather than silently succeeding -- a level nobody was told
+    # about is the failure INV-12 names.
+    ops_channel_id: str | None = None
+
     # --- streams --------------------------------------------------------
     stream_maxlen: int = 100_000
     stream_alerts_raw: str = "alerts.raw"

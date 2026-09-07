@@ -45,6 +45,12 @@ class FakeValkey:
         self.keys: dict[str, str] = {}
         self._seq = 0
         self.alive = True
+        # Streams that refuse writes. Per-stream rather than a single kill
+        # switch because the interesting brownout case is *partial*: the
+        # primary stream is unavailable and the write-ahead stream is not, and
+        # a fake that could only be all-up or all-down could not express the
+        # case the buffer exists for.
+        self.fail_streams: set[str] = set()
 
     async def xadd(
         self,
@@ -54,12 +60,33 @@ class FakeValkey:
         maxlen: int | None = None,
         approximate: bool = True,
     ) -> str:
+        if not self.alive or name in self.fail_streams:
+            raise ConnectionError(f"fake valkey refused a write to {name}")
         self._seq += 1
         entry_id = f"{self._seq}-0"
         self.streams.setdefault(name, []).append((entry_id, dict(fields)))
         if maxlen is not None and len(self.streams[name]) > maxlen:
             self.streams[name] = self.streams[name][-maxlen:]
         return entry_id
+
+    async def xrange(self, name: str, *, count: int | None = None) -> list[Any]:
+        """Oldest-first, which is what makes the WAL drain preserve order."""
+        if not self.alive:
+            raise ConnectionError("fake valkey is down")
+        entries = list(self.streams.get(name, []))
+        return entries[:count] if count is not None else entries
+
+    async def xdel(self, name: str, *ids: str) -> int:
+        if not self.alive:
+            raise ConnectionError("fake valkey is down")
+        before = len(self.streams.get(name, []))
+        self.streams[name] = [e for e in self.streams.get(name, []) if e[0] not in set(ids)]
+        return before - len(self.streams.get(name, []))
+
+    async def xlen(self, name: str) -> int:
+        if not self.alive:
+            raise ConnectionError("fake valkey is down")
+        return len(self.streams.get(name, []))
 
     async def ping(self) -> bool:
         if not self.alive:
