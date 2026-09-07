@@ -1,0 +1,55 @@
+# The static rota (W5-03) — the second implementation behind PagingAdapter, and
+# the middle rung of the on-call fallback ladder (W5-05, FMEA #14).
+#
+# When the hosted provider is unreachable, "we do not know who is on call" is
+# the worst possible answer during an incident. A checked-in rota is a *stale*
+# answer, and a stale answer that announces itself as stale beats no answer.
+#
+# Rotation is computed from the incident's own timestamp against a fixed epoch
+# (2026-01-05, a Monday), never from the wall clock, so the same incident routes
+# to the same person under replay.
+#
+# `team_channel` is the last rung: if nobody can be resolved *and* nobody can be
+# paged, the bot broadcasts into this channel rather than failing silently.
+
+schedules:
+  default:
+    period_days: 7
+    team_channel: "#incident-response"
+    members:
+      - U_ONCALL_A
+      - U_ONCALL_B
+      - U_ONCALL_C
+
+  payments:
+    period_days: 7
+    team_channel: "#team-payments"
+    members:
+      - U_PAY_ANANYA
+      - U_PAY_RAVI
+      - U_PAY_MEERA
+
+  checkout:
+    period_days: 7
+    team_channel: "#team-checkout"
+    members:
+      - U_CO_DIVYA
+      - U_CO_SAM
+
+  platform:
+    period_days: 7
+    team_channel: "#team-platform"
+    members:
+      - U_PLAT_JOSE
+      - U_PLAT_WEI
+      - U_PLAT_TARA
+
+  database:
+    # A shorter rotation on purpose: the database rota is two people deep, and a
+    # seven-day period on a two-person team is what produces the
+    # `consecutive_oncall_days >= 5` term in the fatigue score every single week.
+    period_days: 3
+    team_channel: "#team-database"
+    members:
+      - U_DB_PRIYA
+      - U_DB_OMAR

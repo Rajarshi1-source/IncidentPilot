@@ -16,11 +16,15 @@ import contextlib
 import signal
 
 from incidentpilot.adapters.chat.factory import build_chat
+from incidentpilot.adapters.paging.factory import build_paging
 from incidentpilot.config.settings import Settings
 from incidentpilot.config.settings import settings as default_settings
+from incidentpilot.db import repositories as repo
 from incidentpilot.db.engine import build_engine, build_session_factory
 from incidentpilot.orchestration.handlers import build_handlers
 from incidentpilot.orchestration.outbox import OutboxRelay
+from incidentpilot.orchestration.routing import ResponderRouter
+from incidentpilot.runbooks.library import build_library
 from incidentpilot.runtime import configure_event_loop
 from incidentpilot.telemetry.logging import configure_logging, get_logger
 
@@ -37,7 +41,38 @@ async def run(cfg: Settings | None = None, *, max_passes: int | None = None) -> 
 
     engine = build_engine(cfg)
     sessions = build_session_factory(engine)
-    relay = OutboxRelay(build_handlers(build_chat(cfg), sessions))
+
+    # The relay is the only external writer, so it is the only process that
+    # needs a pager, and the only one that needs the runbooks rendered. Building
+    # them here rather than in the API keeps that true.
+    from redis.asyncio import Redis
+
+    valkey = Redis.from_url(cfg.valkey_url.get_secret_value(), decode_responses=True)
+    paging = build_paging(cfg)
+    router = ResponderRouter(
+        paging,
+        repo.OnCallCache(valkey, ttl_s=cfg.oncall_cache_ttl_s),
+        max_pages=cfg.fatigue_max_pages,
+        default_schedule=cfg.oncall_schedule_default,
+    )
+
+    try:
+        runbooks = await build_library(sessions, cfg.runbooks_dir)
+    except Exception as exc:
+        # A war room with no runbook is worse than one with a runbook and far
+        # better than no war room at all, so this is survivable -- loudly.
+        log.error("runbooks.load_failed", error=str(exc), directory=cfg.runbooks_dir)
+        runbooks = None
+
+    relay = OutboxRelay(
+        build_handlers(
+            build_chat(cfg, valkey=valkey),
+            sessions,
+            paging=paging,
+            router=router,
+            runbooks=runbooks,
+        )
+    )
 
     stopping = asyncio.Event()
 
@@ -75,6 +110,8 @@ async def run(cfg: Settings | None = None, *, max_passes: int | None = None) -> 
                 break
     finally:
         await engine.dispose()
+        with contextlib.suppress(Exception):
+            await valkey.aclose()
         log.info("relay.stopped", passes=passes)
 
 

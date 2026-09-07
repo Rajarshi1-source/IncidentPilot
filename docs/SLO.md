@@ -15,7 +15,7 @@ Status column reflects what is actually instrumented today, not what is planned.
 | **Ingest availability** | `1 - (5xx on /webhooks/* ÷ total)` | **99.9 %** | 43 min | ✅ W1 |
 | **Ingest latency** | p99 webhook ack | **< 250 ms** | — | ✅ W1 |
 | **Time-to-war-room** | alert accepted → channel created + responder invited + runbook pinned | **p95 < 10 s** | — | ✅ W3 |
-| **Responder notified** | alert accepted → responder DM delivered | **p95 < 30 s** | — | ⏳ W5 |
+| **Responder notified** | alert accepted → page delivered, or the channel told nobody was reached | **p95 < 30 s** | — | ✅ W5 |
 | **Transcript completeness** | of the newest page Slack reports, the fraction we hold (sampled, see ADR 0003) | **≥ 99.99 %** | see below | ✅ W4 |
 | **PIR delivery** | resolve → draft posted, any layer including skeleton | **99.5 %, p95 < 90 s** | 3.6 h | ⏳ W6 |
 | **PIR grounding** | PIRs with zero uncited claims | **100 % — hard invariant** | **zero** | ⏳ W6 |
@@ -90,7 +90,7 @@ tree.
 | Ingest availability | `ip_webhook_seconds{outcome}` | `api/webhooks/*` |
 | Ingest latency | `ip_webhook_seconds` | middleware + `deps.elapsed_s` |
 | Time-to-war-room | `ip_time_to_war_room_seconds` | orchestrator (W3) |
-| Responder notified | `ip_time_to_acknowledge_seconds` | paging adapter (W5) |
+| Responder notified | `ip_time_to_acknowledge_seconds` | `handlers.page_responder` (W5) |
 | Transcript completeness | `ip_transcript_completeness` | reconciler (W4) |
 | PIR delivery | `ip_pir_seconds{layer,outcome}` | generator (W6) |
 | PIR grounding | `ip_pir_citation_coverage` | validator (W6) |

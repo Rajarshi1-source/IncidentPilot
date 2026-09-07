@@ -91,6 +91,10 @@ gate-g3: ## G3 — 12 crash points, no duplicate channel on restart
 gate-g4: ## G4 — 200 messages, 200 rows, zero conversations.history calls
 	@bash scripts/gate_g4.sh
 
+.PHONY: gate-g5
+gate-g5: ## G5 — pager unreachable → cache → static rota → team channel, announced
+	@bash scripts/gate_g5.sh
+
 .PHONY: relay
 relay: ## Run the outbox relay (the only external writer)
 	$(UV) run python -m incidentpilot.orchestration.relay
@@ -98,6 +102,10 @@ relay: ## Run the outbox relay (the only external writer)
 .PHONY: reconciler
 reconciler: ## Run the reconciler (the only conversations.history caller)
 	$(UV) run python -m incidentpilot.orchestration.reconciler
+
+.PHONY: scheduler
+scheduler: ## Run the periodic sweeps (SLA nudges, abandonment, reconcile)
+	$(UV) run python -m incidentpilot.orchestration.scheduler
 
 .PHONY: migrate
 migrate: ## Apply migrations to head

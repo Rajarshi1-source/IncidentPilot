@@ -122,8 +122,21 @@ class TransitionEffect:
 # incident reaches pir_drafted with nothing visible in the channel, silently
 # failing the week 6 gate while every unit test still passes.
 EFFECTS: dict[tuple[S, S], TransitionEffect] = {
+    # Order is dispatch order -- the relay claims by id ascending -- and
+    # `page_responder` sits second on purpose. Waking the right human is the
+    # SLO (time-to-acknowledge); the pinned runbook and the live timer are
+    # decorations by comparison, and a war room nobody has been told about is
+    # not a war room. W5 added it here rather than to a new transition because
+    # "someone should be paged" is a property of becoming engaged, not a
+    # separate event that could be missed.
     (S.TRIAGING, S.ENGAGED): TransitionEffect(
-        outbox=("create_channel", "invite_responders", "pin_runbook", "start_timer"),
+        outbox=(
+            "create_channel",
+            "page_responder",
+            "invite_responders",
+            "pin_runbook",
+            "start_timer",
+        ),
         compensate=("archive_channel",),
     ),
     (S.TRIAGING, S.MERGED): TransitionEffect(outbox=("post_merge_notice",)),

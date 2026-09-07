@@ -194,3 +194,132 @@ def degradation_banner(level: int, reason: str) -> list[dict[str, Any]]:
             f"{labels.get(level, 'reduced')} mode* — {reason}"
         )
     ]
+
+
+def routing_notice(
+    *,
+    paged: list[str],
+    notified: list[str],
+    score: float,
+    reasons: list[str],
+    rerouted: bool,
+    oncall_source: str,
+    degraded_reason: str | None = None,
+) -> list[dict[str, Any]]:
+    """The D5 announcement. The bot never silently reroutes (W5-08).
+
+    Three things are always visible: who was woken up, the score that decided
+    it, and the reasons behind the score. A responder who cannot see why they
+    were skipped -- or why they were paged instead of the person whose week it
+    is -- cannot argue with the decision, and an unarguable decision is the kind
+    people route around.
+
+    The opt-in button is the part worth defending in an interview. At a high
+    score the primary is *notified*, not removed: "I'm good, add me" puts them
+    back in one click, because the system does not actually know whether they
+    are tired.
+    """
+    who = ", ".join(f"<@{u}>" for u in paged) or "_nobody_"
+    blocks: list[dict[str, Any]] = [section(f":pager: Paged {who}")]
+
+    if degraded_reason:
+        # G5: a fallback that does not say so fails the gate. The word
+        # "degraded" is load-bearing -- it is what the gate greps for, and more
+        # importantly what a responder scanning the channel will notice.
+        blocks.append(
+            section(
+                f":warning: *On-call lookup is degraded* — resolved from "
+                f"`{oncall_source}`. {degraded_reason}"
+            )
+        )
+
+    if reasons:
+        blocks.append(context([f"fatigue *{score:.2f}* — " + " · ".join(reasons[:3])]))
+
+    if notified:
+        told = ", ".join(f"<@{u}>" for u in notified)
+        if rerouted:
+            blocks.append(
+                section(
+                    f":sleeping: {told} is on call but scored *{score:.2f}* on recent load, "
+                    "so the secondary was paged instead. Nobody was removed quietly."
+                )
+            )
+            blocks.append(actions([("I'm good, add me", "fatigue_opt_in", ",".join(notified))]))
+        else:
+            blocks.append(section(f":eyes: {told} invited as secondary."))
+
+    return clamp(blocks)
+
+
+def broadcast_notice(*, schedule: str, reason: str) -> list[dict[str, Any]]:
+    """Rung 4 of the ladder: nobody resolved, so shout (FMEA #14).
+
+    Deliberately loud and deliberately in the team channel rather than the war
+    room: the people who need to see it are the ones not yet in the incident.
+    """
+    return clamp(
+        [
+            section(
+                f":rotating_light: *Nobody could be resolved as on-call for `{schedule}`* — "
+                "this notice is the degraded fallback, and it means an incident is open "
+                "with no page delivered."
+            ),
+            context([f"reason: {reason}"]),
+        ]
+    )
+
+
+def runbook_message(
+    *,
+    name: str,
+    version: str,
+    steps: list[tuple[str, str]],
+    matched_on: str,
+    url: str | None = None,
+) -> list[dict[str, Any]]:
+    """The pinned runbook (W5-12).
+
+    ``steps`` is ``[(step_id, rendered_markdown), ...]``. Each step keeps its id
+    visible in the context line, which is not decoration: ``/step done
+    verify-replica-lag`` needs the responder to be able to read the id off the
+    message, and it is the same id D4's efficacy query groups by.
+    """
+    blocks: list[dict[str, Any]] = [
+        header(f":books: {name}"),
+        context([f"v{version} · matched on `{matched_on}`"]),
+    ]
+    for index, (step_id, body) in enumerate(steps, start=1):
+        blocks.append(
+            section(
+                f"*{index}. {body.strip()}"[:MAX_SECTION_CHARS] + "*"
+                if False
+                else f"*{index}.* {body.strip()}"
+            )
+        )
+        blocks.append(context([f"`/step done {step_id}`"]))
+    if url:
+        blocks.append(context([f":link: <{url}|Full runbook>"]))
+    return clamp(blocks)
+
+
+def sla_nudge(
+    *, public_key: str, elapsed_label: str, responders: list[str]
+) -> list[dict[str, Any]]:
+    """A visible reminder, not a second page (W5-17).
+
+    The responder was already woken up. Paging them again for the same incident
+    is how a pager stops being read, so this is loud in the channel and silent
+    on the phone. The button is an acknowledgement, which is the thing actually
+    missing -- ``acknowledged_at`` is what the time-to-acknowledge SLO measures.
+    """
+    who = ", ".join(f"<@{r}>" for r in responders) if responders else "the channel"
+    return clamp(
+        [
+            section(
+                f":alarm_clock: *{public_key}* has been open *{elapsed_label}* with no "
+                f"acknowledgement. {who} — is anyone on this?"
+            ),
+            actions([("I'm on it", "acknowledge_incident", public_key)]),
+        ]
+    )

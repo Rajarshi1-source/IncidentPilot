@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     alertmanager_bearer: SecretStr | None = None
     paging_webhook_secret: SecretStr | None = None
     deploy_bearer: SecretStr | None = None
+    # PagerDuty splits its surfaces: the Events API v2 routing key creates
+    # the alert, the REST token answers "who is on call". Different tokens,
+    # different hosts, different headers -- one field for each so a
+    # deployment cannot half-configure the provider and find out at 3 a.m.
+    paging_routing_key: SecretStr | None = None
+    paging_api_token: SecretStr | None = None
     # Socket Mode only. An app-level token, not the bot token: it opens the
     # WebSocket in development so no public URL is needed, and it is absent
     # in production where the HTTP receiver is the one that runs.
@@ -66,9 +72,20 @@ class Settings(BaseSettings):
     merge_threshold: float = 0.62
     storm_threshold: int = 5
 
-    # --- fatigue (D5) ---------------------------------------------------
+    # --- fatigue and routing (D5) ---------------------------------------
     fatigue_lookback_h: int = 8
     fatigue_max_pages: int = 2
+    # The on-call answer is cached for a minute, not an hour: a rotation
+    # handover mid-incident must not page the person who just went to bed.
+    oncall_cache_ttl_s: int = 60
+    oncall_schedule_default: str = "default"
+
+    # --- runbooks (D4) ---------------------------------------------------
+    runbooks_dir: str = "runbooks"
+
+    # --- scheduler (W5-17) -----------------------------------------------
+    sla_nudge_interval_s: int = 300
+    abandonment_after_h: int = 24
 
     # --- transcript and reconciliation (W4) ------------------------------
     # Slack allows a non-Marketplace app one conversations.history call per

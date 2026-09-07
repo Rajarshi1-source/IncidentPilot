@@ -22,7 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from incidentpilot.adapters.chat import block_kit
 from incidentpilot.adapters.chat.base import ChatAdapter, channel_name
+from incidentpilot.adapters.paging.base import (
+    PermanentPagingError,
+    RetryablePagingError,
+)
+from incidentpilot.db import repositories as repo
 from incidentpilot.orchestration.outbox import idem_key
+from incidentpilot.orchestration.routing import ResponderRouter, RoutingPlan
+from incidentpilot.runbooks import renderer
 from incidentpilot.telemetry.logging import get_logger
 from incidentpilot.telemetry.metrics import OUTBOX_DISPATCHED, TIME_TO_WAR_ROOM
 
@@ -30,11 +37,19 @@ log = get_logger(__name__)
 
 Handler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
+# Transient paging failures are retried by the relay this many times before
+# the war room is told nobody could be reached. Three attempts of
+# exponential backoff is roughly a minute -- long enough to ride out a blip,
+# short enough that an unreachable pager does not stay a secret.
+PAGE_ATTEMPTS_BEFORE_BROADCAST = 3
+
 LOAD_INCIDENT = text(
     """
     SELECT i.id, i.public_key, i.title, i.severity, i.state, i.root_signal,
            i.correlated_alert_count, i.chat_channel_id, i.chat_channel_name,
-           i.detected_at, i.engaged_at, i.affected_services,
+           i.detected_at, i.engaged_at, i.acknowledged_at, i.affected_services,
+           i.primary_service_id,
+           i.runbook_id,
            s.name AS primary_service
       FROM incidents i
       LEFT JOIN services s ON s.id = i.primary_service_id
@@ -69,10 +84,19 @@ class ChatHandlers:
         sessions: async_sessionmaker[AsyncSession],
         *,
         now: Callable[[], datetime] | None = None,
+        paging: Any | None = None,
+        router: ResponderRouter | None = None,
+        runbooks: Any | None = None,
     ) -> None:
         self._chat = chat
         self._sessions = sessions
         self._now = now or (lambda: datetime.now(UTC))
+        # Optional so week 3's crash matrix, which predates paging, still builds
+        # a handler map without a pager. `page_responder` says so explicitly
+        # rather than failing obscurely three frames down when one is missing.
+        self._paging = paging
+        self._router = router
+        self._runbooks = runbooks
 
     def as_map(self) -> dict[str, Handler]:
         return {
@@ -84,6 +108,8 @@ class ChatHandlers:
             "post_storm_update": self.post_storm_update,
             "archive_channel": self.archive_channel,
             "capture_metric_snapshot": self.capture_metric_snapshot,
+            "page_responder": self.page_responder,
+            "post_sla_nudge": self.post_sla_nudge,
         }
 
     # -- helpers ---------------------------------------------------------
@@ -166,12 +192,23 @@ class ChatHandlers:
         return {"invited": len(user_ids)}
 
     async def pin_runbook(self, row: dict[str, Any]) -> dict[str, Any]:
-        """Priority 0: the runbook is the war room's reason to exist."""
+        """Priority 0: the runbook is the war room's reason to exist.
+
+        The runbook is chosen from the **root signal** (W5-11), not from the
+        loudest alert. During a storm the noisiest alert is almost never the
+        cause -- `postgres-primary-down` fires once, the thirty-nine
+        `HighErrorRate` alerts it causes fire everywhere downstream -- and
+        pinning the high-error-rate runbook to a database incident sends the
+        responder through the wrong list while the real cause sits one hop away.
+        """
         incident = await self._incident(int(row["incident_id"]))
         if incident is None or not incident["chat_channel_id"]:
             raise LookupError("channel not created yet")
 
         payload = row.get("payload") or {}
+        channel_id = str(incident["chat_channel_id"])
+        matched = self._match_runbook(incident)
+
         blocks = block_kit.incident_header(
             public_key=incident["public_key"],
             title=incident["title"],
@@ -185,15 +222,82 @@ class ChatHandlers:
         )
 
         posted = await self._chat.post_message(
-            incident["chat_channel_id"],
+            channel_id,
             text=f"{incident['public_key']} — {incident['title']}",
             blocks=blocks,
             priority=0,
         )
         if posted is not None:
-            await self._chat.pin(incident["chat_channel_id"], posted.ts)
+            await self._chat.pin(channel_id, posted.ts)
+
+        runbook_name: str | None = None
+        if matched is not None:
+            runbook_name = matched.runbook.name
+            await self._post_runbook(incident, matched, channel_id)
+        else:
+            # Said out loud rather than left blank. "No runbook matched" is
+            # useful -- it is how a gap in the catalogue gets noticed -- while an
+            # empty war room just looks like the bot is broken.
+            await self._chat.post_message(
+                channel_id,
+                text="no runbook matched",
+                blocks=[
+                    block_kit.context(
+                        [
+                            ":books: No runbook matched root signal "
+                            f"`{incident['root_signal'] or 'unknown'}`."
+                        ]
+                    )
+                ],
+                priority=1,
+            )
+
         OUTBOX_DISPATCHED.labels(action="pin_runbook").inc()
-        return {"ts": posted.ts if posted else None}
+        return {"ts": posted.ts if posted else None, "runbook": runbook_name}
+
+    def _match_runbook(self, incident: dict[str, Any]) -> Any:
+        if self._runbooks is None:
+            return None
+        return self._runbooks.match(
+            root_signal=incident.get("root_signal"),
+            severity=str(incident["severity"]),
+            service=incident.get("primary_service"),
+        )
+
+    async def _post_runbook(self, incident: dict[str, Any], matched: Any, channel_id: str) -> None:
+        """Post the rendered runbook and record which one the incident got.
+
+        Recording it is not bookkeeping: ``Q4`` and ``Q5`` both join through
+        ``incidents.runbook_id``, so an incident that was pinned a runbook and
+        never recorded it contributes nothing to efficacy -- invisible in exactly
+        the way a runbook nobody follows is.
+        """
+        context = renderer.render_context(
+            service=incident.get("primary_service"),
+            alertname=incident.get("root_signal"),
+            severity=str(incident["severity"]),
+            public_key=str(incident["public_key"]),
+        )
+        blocks = renderer.render_blocks(matched.runbook, context, matched_on=matched.matched_on)
+        runbook_message = await self._chat.post_message(
+            channel_id,
+            text=f"Runbook: {matched.runbook.name}",
+            blocks=blocks,
+            priority=0,
+        )
+
+        runbook_id = self._runbooks.id_for(matched.runbook.name) if self._runbooks else None
+        if runbook_id is not None:
+            async with self._sessions() as session, session.begin():
+                await repo.set_incident_runbook(session, int(incident["id"]), runbook_id)
+
+        log.info(
+            "runbook.pinned",
+            incident_id=incident["id"],
+            runbook=matched.runbook.name,
+            matched_on=matched.matched_on,
+            ts=runbook_message.ts if runbook_message else None,
+        )
 
     async def start_timer(self, row: dict[str, Any]) -> dict[str, Any]:
         """Priority 2. May be dropped entirely under pressure.
@@ -294,6 +398,199 @@ class ChatHandlers:
         )
         return {"recorded": True, "sampler": "W6-03", "at": payload.get("at")}
 
+    async def page_responder(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Wake the right human, and say out loud who and why (W5-08, D5).
+
+        The ladder ends here. ``ResponderRouter`` decided; this function performs
+        the three external writes that decision implies -- the page, the invite,
+        the announcement -- and records the ``page_events`` row that the next
+        fatigue score will be computed from.
+
+        **Nothing here is allowed to be silent.** A degraded on-call lookup posts
+        a notice; a reroute posts who was skipped, the score, the reasons and an
+        opt-in button; a rota that cannot deliver a page broadcasts in the team
+        channel. G5 fails on a silent fallback, and that is the point of the gate
+        rather than an inconvenience in it.
+        """
+        incident_id = int(row["incident_id"])
+        incident = await self._incident(incident_id)
+        if incident is None:
+            return {"skipped": "incident missing"}
+        if not incident["chat_channel_id"]:
+            raise LookupError("channel not created yet")
+        if self._router is None or self._paging is None:
+            log.warning("paging.not_configured", incident_id=incident_id)
+            return {"skipped": "no paging adapter configured"}
+
+        channel_id = str(incident["chat_channel_id"])
+        async with self._sessions() as session:
+            schedule = await repo.team_for_service(session, incident["primary_service_id"])
+            plan = await self._router.plan(
+                session, schedule=schedule, at=incident["detected_at"] or self._now()
+            )
+
+        if plan.broadcast_channel is not None:
+            return await self._broadcast(plan, channel_id)
+
+        paged: list[str] = []
+        for user in plan.page:
+            try:
+                result = await self._paging.page(
+                    user,
+                    incident_key=str(incident["public_key"]),
+                    title=str(incident["title"]),
+                    severity=str(incident["severity"]),
+                )
+            except PermanentPagingError as exc:
+                # The static rota can name someone but cannot ring a phone. That
+                # is rung 4 in its second sense: we know who, we simply cannot
+                # reach them, so the team channel hears about it.
+                log.warning("paging.undeliverable", incident_id=incident_id, error=str(exc))
+                return await self._broadcast(plan, channel_id, reason=str(exc))
+            except RetryablePagingError as exc:
+                # A 503 might be a blip, so the first few attempts go back to the
+                # relay for exponential backoff. But "keep retrying quietly" is
+                # the silent failure G5 forbids -- after PAGE_ATTEMPTS_BEFORE_
+                # BROADCAST the incident is minutes old with nobody woken up, and
+                # at that point shouting in the team channel beats a ninth retry.
+                if int(row.get("attempts") or 0) < PAGE_ATTEMPTS_BEFORE_BROADCAST:
+                    log.warning(
+                        "paging.transient_failure",
+                        incident_id=incident_id,
+                        attempts=row.get("attempts"),
+                        error=str(exc),
+                    )
+                    raise
+                log.error("paging.exhausted", incident_id=incident_id, error=str(exc))
+                return await self._broadcast(plan, channel_id, reason=str(exc))
+
+            if result.delivered:
+                paged.append(user)
+                await self._record_page(incident, user)
+
+        if plan.invite:
+            await self._chat.invite(channel_id, list(plan.invite))
+
+        await self._chat.post_message(
+            channel_id,
+            text="paged " + (", ".join(paged) if paged else "nobody"),
+            blocks=block_kit.routing_notice(
+                paged=paged,
+                notified=list(plan.notify),
+                score=plan.score,
+                reasons=list(plan.reasons),
+                rerouted=plan.rerouted,
+                oncall_source=str(plan.oncall.source),
+                degraded_reason=plan.degraded_reason,
+            ),
+            priority=0,
+        )
+        OUTBOX_DISPATCHED.labels(action="page_responder").inc()
+        log.info(
+            "responder.paged",
+            incident_id=incident_id,
+            paged=paged,
+            notified=list(plan.notify),
+            score=round(plan.score, 3),
+            source=str(plan.oncall.source),
+            degraded=plan.degraded,
+        )
+        return {
+            "paged": paged,
+            "notified": list(plan.notify),
+            "score": round(plan.score, 3),
+            "source": str(plan.oncall.source),
+            "degraded": plan.degraded,
+        }
+
+    async def _broadcast(
+        self, plan: RoutingPlan, war_room: str, *, reason: str | None = None
+    ) -> dict[str, Any]:
+        """Rung 4: nobody could be paged, so say so where people will see it.
+
+        Posted in **both** places deliberately. The team channel is where the
+        people not yet in the incident are; the war room is where whoever reads
+        the transcript afterwards will look for why nobody arrived.
+        """
+        why = reason or plan.degraded_reason or "no on-call could be resolved"
+        target = plan.broadcast_channel or war_room
+
+        await self._chat.post_message(
+            target,
+            text="no on-call resolved",
+            blocks=block_kit.broadcast_notice(schedule=plan.schedule, reason=why),
+            priority=0,
+        )
+        if target != war_room:
+            await self._chat.post_message(
+                war_room,
+                text="on-call lookup degraded",
+                blocks=block_kit.routing_notice(
+                    paged=[],
+                    notified=[],
+                    score=plan.score,
+                    reasons=list(plan.reasons),
+                    rerouted=False,
+                    oncall_source=str(plan.oncall.source),
+                    degraded_reason=why,
+                ),
+                priority=0,
+            )
+
+        OUTBOX_DISPATCHED.labels(action="page_responder").inc()
+        log.error("paging.broadcast_fallback", schedule=plan.schedule, reason=why)
+        return {"paged": [], "broadcast": target, "degraded": True, "reason": why}
+
+    async def _record_page(self, incident: dict[str, Any], user: str) -> None:
+        """The row the next fatigue score is computed from.
+
+        Written immediately after each page rather than batched at the end of
+        the loop: if the process dies part-way through, the pages that already
+        happened must still be counted, or the responder who was just woken up
+        looks fresh to the next incident.
+        """
+        async with self._sessions() as session, session.begin():
+            tz = await repo.responder_timezone(session, user)
+            await repo.record_page(
+                session,
+                at=self._now(),
+                responder=user,
+                incident_id=int(incident["id"]),
+                severity=str(incident["severity"]),
+                tz=tz,
+            )
+
+    async def post_sla_nudge(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Priority 1. Enqueued by the scheduler, posted here like everything else.
+
+        Priority 1 rather than 0: a nudge matters, but not more than creating the
+        war room it is nudging about. Under rate-limit pressure the channel still
+        gets created first, which is the ordering the whole priority-lane design
+        exists to guarantee.
+        """
+        incident = await self._incident(int(row["incident_id"]))
+        if incident is None or not incident["chat_channel_id"]:
+            raise LookupError("channel not created yet")
+        if incident["acknowledged_at"] is not None:
+            # Someone acknowledged between the sweep and the dispatch. Not an
+            # error -- the queue is allowed to be a few seconds behind reality --
+            # but posting the nudge anyway would be noise in a live incident.
+            return {"skipped": "acknowledged before dispatch"}
+
+        payload = row.get("payload") or {}
+        await self._chat.post_message(
+            str(incident["chat_channel_id"]),
+            text=f"{incident['public_key']} is unacknowledged",
+            blocks=block_kit.sla_nudge(
+                public_key=str(incident["public_key"]),
+                elapsed_label=_elapsed_label(incident["detected_at"], self._now()),
+                responders=[str(u) for u in payload.get("user_ids", [])],
+            ),
+            priority=1,
+        )
+        OUTBOX_DISPATCHED.labels(action="post_sla_nudge").inc()
+        return {"posted": True, "age_s": payload.get("age_s")}
+
     # -- called by the reconciler, not by the relay ----------------------
 
     async def archive_orphan_channel(self, channel_id: str) -> dict[str, Any]:
@@ -319,8 +616,13 @@ def build_handlers(
     sessions: async_sessionmaker[AsyncSession],
     *,
     now: Callable[[], datetime] | None = None,
+    paging: Any | None = None,
+    router: ResponderRouter | None = None,
+    runbooks: Any | None = None,
 ) -> dict[str, Handler]:
-    return ChatHandlers(chat, sessions, now=now).as_map()
+    return ChatHandlers(
+        chat, sessions, now=now, paging=paging, router=router, runbooks=runbooks
+    ).as_map()
 
 
 __all__ = ["ChatHandlers", "Handler", "build_handlers", "idem_key"]

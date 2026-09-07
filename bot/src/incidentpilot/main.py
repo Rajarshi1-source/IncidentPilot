@@ -18,13 +18,17 @@ from redis.asyncio import Redis
 
 from incidentpilot import __version__
 from incidentpilot.api import health
+from incidentpilot.api.slash import commands as slash_commands
 from incidentpilot.api.webhooks import alertmanager, paging, slack
 from incidentpilot.config.assert_invariants import assert_invariants
+from incidentpilot.config.graph_loader import load_service_graph
 from incidentpilot.config.settings import Settings
 from incidentpilot.config.settings import settings as default_settings
 from incidentpilot.db import repositories as repo
 from incidentpilot.db.engine import build_engine, build_session_factory
+from incidentpilot.orchestration.orchestrator import Orchestrator
 from incidentpilot.orchestration.streams import StreamClient, StreamProducer
+from incidentpilot.runbooks.library import build_library
 from incidentpilot.runtime import configure_event_loop
 from incidentpilot.telemetry.logging import configure_logging, get_logger, reset_context
 from incidentpilot.telemetry.metrics import (
@@ -105,12 +109,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not hasattr(app.state, "sessions"):
         app.state.sessions = build_session_factory(build_engine(cfg))
 
+    # One channel->incident cache for the whole process. The ingestor and the
+    # slash commands must resolve a war room the same way; two caches would
+    # eventually disagree in a way nobody could reproduce.
+    if not hasattr(app.state, "channels"):
+        app.state.channels = repo.ChannelCache(
+            app.state.valkey, app.state.sessions, ttl_s=cfg.channel_cache_ttl_s
+        )
+
     if not hasattr(app.state, "ingestor"):
         app.state.ingestor = TranscriptIngestor(
             app.state.sessions,
-            repo.ChannelCache(app.state.valkey, app.state.sessions, ttl_s=cfg.channel_cache_ttl_s),
+            app.state.channels,
             classifier=IntentClassifier() if cfg.intent_layer2_enabled else None,
         )
+
+    # The slash commands drive the same state machine the worker does, so the
+    # API needs an orchestrator. One instance: the service graph and correlation
+    # config are read-only and building them per request would re-read YAML on
+    # the hot path. `Settings` satisfies the CorrelationConfig Protocol, so
+    # there is no second copy of merge_threshold to keep in step.
+    if not hasattr(app.state, "orchestrator"):
+        app.state.orchestrator = Orchestrator(load_service_graph(), cfg)
+
+    # Runbooks are files in git, loaded once and synced to the table so that
+    # `incidents.runbook_id` has something to reference. A failure to load is
+    # logged and survived here rather than fatal: the API's job is to accept
+    # webhooks, and refusing to start over a missing markdown file would take
+    # ingest down for a documentation problem.
+    if not hasattr(app.state, "runbooks"):
+        try:
+            app.state.runbooks = await build_library(app.state.sessions, cfg.runbooks_dir)
+        except Exception as exc:
+            log.error("runbooks.load_failed", error=str(exc), directory=cfg.runbooks_dir)
+            app.state.runbooks = None
 
     app.state.shutting_down = False
     _install_shutdown_handler(app)
@@ -141,6 +173,9 @@ def create_app(
     streams: StreamProducer | None = None,
     sessions: Any = None,
     ingestor: Any = None,
+    channels: Any = None,
+    runbooks: Any = None,
+    orchestrator: Any = None,
 ) -> FastAPI:
     """Build the application.
 
@@ -167,6 +202,12 @@ def create_app(
         app.state.sessions = sessions
     if ingestor is not None:
         app.state.ingestor = ingestor
+    if channels is not None:
+        app.state.channels = channels
+    if runbooks is not None:
+        app.state.runbooks = runbooks
+    if orchestrator is not None:
+        app.state.orchestrator = orchestrator
 
     @app.middleware("http")
     async def timing_and_context(request: Request, call_next: Any) -> Response:
@@ -194,6 +235,7 @@ def create_app(
     app.include_router(alertmanager.router)
     app.include_router(paging.router)
     app.include_router(slack.router)
+    app.include_router(slash_commands.router)
 
     return app
 

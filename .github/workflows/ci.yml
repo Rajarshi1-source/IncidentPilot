@@ -35,6 +35,10 @@ jobs:
           filters: |
             bot:
               - 'bot/**'
+              # Runbooks are markdown, but they are parsed, matched and pinned
+              # by code -- an edit that breaks a step marker breaks D4's
+              # efficacy numbers, so it belongs in the bot's test run.
+              - 'runbooks/**'
             prompts:
               - 'bot/src/incidentpilot/pir/prompts/**'
               - 'bot/src/incidentpilot/config/models.yaml'
@@ -168,6 +172,15 @@ jobs:
       # database that failed to come up looks exactly like that.
       - name: G4 - 200 messages, 200 rows, zero history calls
         run: bash scripts/gate_g4.sh
+        env:
+          IP_TEST_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
+          IP_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
+
+      # G5's assertion is about what the channel was TOLD, not only about who
+      # was paged: a fallback that resolves someone and looks identical to a
+      # healthy page is the silent failure the gate exists to catch.
+      - name: G5 - the on-call ladder, announced at every rung
+        run: bash scripts/gate_g5.sh
         env:
           IP_TEST_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
           IP_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot

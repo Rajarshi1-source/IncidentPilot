@@ -52,6 +52,29 @@ class FakeChat:
     def calls_to(self, method: str) -> list[ChatCall]:
         return [c for c in self.calls if c.method == method]
 
+    @property
+    def last_message_text(self) -> str:
+        """The most recent post, text and rendered blocks together.
+
+        Both, because Block Kit puts the words a human reads inside the blocks
+        and the ``text`` field is only the notification fallback. Asserting on
+        ``text`` alone would pass while the channel showed something else.
+        """
+        posts = self.calls_to("chat.postMessage")
+        if not posts:
+            return ""
+        meta = posts[-1].meta
+        return f"{meta.get('text', '')} {meta.get('blocks', '')}"
+
+    def said(self, needle: str) -> bool:
+        """Whether ``needle`` appears anywhere the bot posted, case-insensitively."""
+        haystack = " ".join(
+            f"{c.meta.get('text', '')} {c.meta.get('blocks', '')}"
+            for c in self.calls
+            if c.method in {"chat.postMessage", "chat.update"}
+        )
+        return needle.lower() in haystack.lower()
+
     def reset_calls(self) -> None:
         """Clear the call log but keep the workspace state.
 
@@ -104,7 +127,18 @@ class FakeChat:
         blocks: list[dict[str, Any]] | None = None,
         priority: int = 0,
     ) -> PostedMessage | None:
-        self._record("chat.postMessage", channel_id, key=None, priority=priority)
+        # The text and blocks are recorded, not just the fact of the call. G5
+        # asserts on what the channel was *told* -- "a fallback that does not
+        # announce itself fails the gate" is unassertable against a call log
+        # that only remembers the channel id.
+        self._record(
+            "chat.postMessage",
+            channel_id,
+            key=None,
+            priority=priority,
+            text=text,
+            blocks=blocks or [],
+        )
         self._seq += 1
         posted = PostedMessage(channel_id=channel_id, ts=f"{1757000000 + self._seq}.000100")
         self.messages.setdefault(channel_id, []).append(posted)
@@ -119,7 +153,9 @@ class FakeChat:
         blocks: list[dict[str, Any]] | None = None,
         priority: int = 2,
     ) -> None:
-        self._record("chat.update", channel_id, ts, priority=priority)
+        self._record(
+            "chat.update", channel_id, ts, priority=priority, text=text, blocks=blocks or []
+        )
 
     async def pin(self, channel_id: str, ts: str) -> None:
         self._record("pins.add", channel_id, ts)

@@ -9,11 +9,12 @@ adapters are fakeable and the replay harness works.
 from __future__ import annotations
 
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Request
 
 from incidentpilot.config.settings import Settings
+from incidentpilot.db.repositories import ChannelCache
 from incidentpilot.orchestration.streams import StreamClient, StreamProducer
 from incidentpilot.transcript.ingestor import TranscriptIngestor
 
@@ -58,7 +59,25 @@ def get_ingestor(request: Request) -> TranscriptIngestor:
     return ingestor
 
 
+def get_sessions(request: Request) -> Any:
+    """The API's session factory, built once in the lifespan.
+
+    Week 4 gave the API an engine (the transcript is a write path); week 5's
+    slash commands need it too, and reaching for a module-level factory here
+    would undo the property that makes the whole suite fixture-driven.
+    """
+    return request.app.state.sessions
+
+
+def get_channels(request: Request) -> ChannelCache:
+    """The one channel->incident cache, shared with the ingestor."""
+    cache: ChannelCache = request.app.state.channels
+    return cache
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 ValkeyDep = Annotated[StreamClient, Depends(get_valkey)]
 StreamsDep = Annotated[StreamProducer, Depends(get_streams)]
 IngestorDep = Annotated[TranscriptIngestor, Depends(get_ingestor)]
+SessionsDep = Annotated[Any, Depends(get_sessions)]
+ChannelsDep = Annotated[ChannelCache, Depends(get_channels)]

@@ -30,6 +30,9 @@ WRITE_METHODS: frozenset[str] = frozenset(
         "update_message",
         "pin",
         "archive_channel",
+        # W5: waking a human is an external write like any other, and the
+        # paging adapters are subject to the same rule as the chat ones.
+        "page",
     }
 )
 
@@ -51,6 +54,16 @@ ALLOWED_TYPE_REFERENCES: frozenset[str] = frozenset(
         # directory rather than growing a list of scattered files.
         "adapters/chat/socket_mode.py",
         "adapters/chat/history.py",
+        # W5. The paging adapters define the write surface and the factory
+        # constructs one; neither calls through it.
+        "adapters/paging/base.py",
+        "adapters/paging/fake.py",
+        "adapters/paging/pagerduty.py",
+        "adapters/paging/static_schedule.py",
+        "adapters/paging/factory.py",
+        # Decides who to page and asks the provider who is on call -- a read.
+        # The write itself happens in handlers.py.
+        "orchestration/routing.py",
     }
 )
 
@@ -123,7 +136,8 @@ def test_no_module_outside_the_relay_calls_a_write_method() -> None:
             # Heuristic, and deliberately narrow: only flag calls on something
             # that looks like a chat handle. A broader match would fire on
             # unrelated `.pin(...)` methods and train people to ignore it.
-            if "chat" in owner_name.lower() or "slack" in owner_name.lower():
+            haystack = owner_name.lower()
+            if any(token in haystack for token in ("chat", "slack", "paging", "pager")):
                 violations.append(f"{rel}:{node.lineno} {owner_name}.{func.attr}()")
 
     assert not violations, (

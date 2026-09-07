@@ -356,3 +356,49 @@ class SlackMessageRevision(Base):
     kind: Mapped[str] = mapped_column(Text)  # 'edited' | 'deleted'
     text: Mapped[str | None] = mapped_column(Text)
     observed_at: Mapped[datetime] = mapped_column(TZ, server_default=func.now())
+
+
+class PageEvent(Base):
+    """Hypertable. Every page, so fatigue is measured rather than guessed (D5).
+
+    C-06: the time column is ``time``, not ``paged_at``. Rev 2's fatigue query
+    names the latter and fails outright -- the schema reference is right, and
+    ``time`` is consistent with every other hypertable here.
+
+    ``tz`` is denormalized from ``responders.timezone`` at write time on purpose.
+    A page at 03:00 IST is a night page whatever UTC says, and joining to
+    ``responders`` inside a hypertable window query to discover that would make
+    the fatigue query pay for a join on every chunk.
+    """
+
+    __tablename__ = "page_events"
+
+    time: Mapped[datetime] = mapped_column(TZ, primary_key=True)
+    responder: Mapped[str] = mapped_column(Text, primary_key=True)
+    incident_id: Mapped[int | None] = mapped_column(BigInteger)
+    severity: Mapped[str | None] = mapped_column(SEVERITY_LEVEL)
+    tz: Mapped[str] = mapped_column(Text, server_default="UTC")
+    accepted: Mapped[bool | None] = mapped_column(Boolean)
+
+
+class RunbookStepSignal(Base):
+    """One row per executed step (C-07), from any of three sources.
+
+    ``UNIQUE (incident_id, step_id)`` is the whole deduplication story: a
+    responder who runs the step's command, reacts to the pinned runbook and
+    types ``/step done`` has followed that step once. Three rows would inflate
+    adherence and make D4's efficacy numbers flattering and useless.
+    """
+
+    __tablename__ = "runbook_step_signals"
+    __table_args__ = (UniqueConstraint("incident_id", "step_id", name="uq_step_signal"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("incidents.id", ondelete="CASCADE")
+    )
+    runbook_id: Mapped[int] = mapped_column(Integer, ForeignKey("runbooks.id"))
+    step_id: Mapped[str] = mapped_column(Text)
+    detected_by: Mapped[str] = mapped_column(Text)
+    observed_at: Mapped[datetime] = mapped_column(TZ, server_default=func.now())
+    source_message_ts: Mapped[str | None] = mapped_column(Text)

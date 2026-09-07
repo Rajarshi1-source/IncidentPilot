@@ -16,7 +16,18 @@ from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from incidentpilot.db.models import Alert, Incident, OutboxEvent, Service, SlackMessage
+from incidentpilot.db.models import (
+    Alert,
+    CorrelationFeedback,
+    Incident,
+    OutboxEvent,
+    PageEvent,
+    Responder,
+    Runbook,
+    Service,
+    SlackMessage,
+    TimelineEvent,
+)
 from incidentpilot.domain.correlation import OpenIncident
 from incidentpilot.domain.normalize import NormalizedAlert
 from incidentpilot.domain.states import TERMINAL
@@ -526,3 +537,263 @@ async def held_message_ts(
         {"c": channel_id, "ts": list(candidates)},
     )
     return {str(ts) for ts in rows.scalars().all()}
+
+
+# --- responders and paging (W5) ----------------------------------------------
+
+
+class OnCallCache:
+    """``schedule -> OnCall``, cached in Valkey for a minute (W5-05).
+
+    Sixty seconds, not six hours. A rotation handover mid-incident must not keep
+    paging the person who just went to bed, and the provider call is cheap
+    enough that a short TTL costs nothing. The channel cache can afford six
+    hours because a channel's incident never changes; an on-call rota changes on
+    a schedule.
+
+    Like every cache here, it is an accelerator and never an arbiter (INV-04):
+    a miss, an eviction or an unreachable Valkey all fall through to the ladder.
+    """
+
+    def __init__(self, valkey: Any, *, ttl_s: int = 60, prefix: str = "ip:oncall") -> None:
+        self._valkey = valkey
+        self._ttl_s = ttl_s
+        self._prefix = prefix
+
+    def _key(self, schedule: str) -> str:
+        return f"{self._prefix}:{schedule}"
+
+    async def get(self, schedule: str) -> tuple[str | None, str | None] | None:
+        """``(primary, secondary)``, or None on a miss."""
+        raw = None
+        with contextlib.suppress(Exception):
+            raw = await self._valkey.get(self._key(schedule))
+        if raw is None:
+            return None
+        value = raw.decode() if isinstance(raw, bytes) else str(raw)
+        primary, _, secondary = value.partition("|")
+        return (primary or None, secondary or None)
+
+    async def put(self, schedule: str, primary: str | None, secondary: str | None) -> None:
+        """Only a *confident* answer is cached.
+
+        A degraded answer from the static rota must not be written back: caching
+        it would keep the incident on the fallback rung for the whole TTL even
+        after the provider recovered, and -- worse -- the next lookup would be a
+        cache hit and would stop announcing itself as degraded.
+        """
+        if primary is None:
+            return
+        with contextlib.suppress(Exception):
+            await self._valkey.set(
+                self._key(schedule), f"{primary}|{secondary or ''}", ex=self._ttl_s
+            )
+
+
+async def responder_timezone(session: AsyncSession, slack_user_id: str) -> str:
+    """The responder's local timezone, defaulting to UTC.
+
+    Denormalized onto every ``page_events`` row at write time so the fatigue
+    window can decide "was this a night page" without joining across chunks.
+    """
+    stmt = select(Responder.timezone).where(Responder.slack_user_id == slack_user_id)
+    return str((await session.execute(stmt)).scalars().first() or "UTC")
+
+
+async def record_page(
+    session: AsyncSession,
+    *,
+    at: datetime,
+    responder: str,
+    incident_id: int | None,
+    severity: str | None,
+    tz: str = "UTC",
+    accepted: bool | None = None,
+) -> None:
+    """One row per page. The raw material the fatigue score is computed from.
+
+    Written by the relay in the same transaction that records the dispatch, so a
+    page that happened is always a page that was counted -- a fatigue score
+    built on a partial record would under-count exactly the responders who were
+    paged during the outage that dropped the writes.
+    """
+    await session.execute(
+        pg_insert(PageEvent).values(
+            time=at,
+            responder=responder,
+            incident_id=incident_id,
+            severity=severity,
+            tz=tz,
+            accepted=accepted,
+        )
+    )
+
+
+async def incident_for_routing(session: AsyncSession, incident_id: int) -> Incident | None:
+    stmt = select(Incident).where(Incident.id == incident_id)
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def team_for_service(session: AsyncSession, service_id: int | None) -> str | None:
+    """The paging schedule a service belongs to.
+
+    ``services.team`` doubles as the schedule name rather than adding a
+    ``paging_schedule`` column: one string, one place to keep in step with the
+    rota file, and the mapping is already what an on-call rotation is named after.
+    """
+    if service_id is None:
+        return None
+    stmt = select(Service.team).where(Service.id == service_id)
+    return (await session.execute(stmt)).scalars().first()
+
+
+# --- runbooks (W5) -----------------------------------------------------------
+
+
+async def sync_runbooks(session: AsyncSession, parsed: list[Any]) -> dict[str, int]:
+    """Upsert the parsed runbooks and return ``name -> id``.
+
+    The file in git is the source of truth; this table exists so that
+    ``incidents.runbook_id`` and ``runbook_step_signals.runbook_id`` have
+    something to reference. So the upsert overwrites everything except the
+    primary key -- an edit to the markdown is meant to win, and a row that had
+    drifted from the file would make D4's efficacy numbers describe a runbook
+    nobody is actually reading.
+
+    ``step_ids`` is written from the parsed markers rather than maintained by
+    hand, which is what keeps ``Q5``'s ``unnest(r.step_ids)`` and the detector's
+    signals talking about the same set of steps.
+    """
+    ids: dict[str, int] = {}
+    for runbook in parsed:
+        stmt = (
+            pg_insert(Runbook)
+            .values(
+                name=runbook.name,
+                alert_pattern=runbook.alert_pattern,
+                severity_filter=runbook.severity_filter,
+                service_filter=runbook.service_filter,
+                body=runbook.body,
+                step_ids=list(runbook.step_ids),
+                version=runbook.version,
+                git_sha=runbook.git_sha,
+                is_active=True,
+            )
+            .on_conflict_do_update(
+                index_elements=["name"],
+                set_={
+                    "alert_pattern": runbook.alert_pattern,
+                    "severity_filter": runbook.severity_filter,
+                    "service_filter": runbook.service_filter,
+                    "body": runbook.body,
+                    "step_ids": list(runbook.step_ids),
+                    "version": runbook.version,
+                    "git_sha": runbook.git_sha,
+                    "is_active": True,
+                    "updated_at": text("now()"),
+                },
+            )
+            .returning(Runbook.id)
+        )
+        ids[runbook.name] = int((await session.execute(stmt)).scalar_one())
+    return ids
+
+
+async def set_incident_runbook(session: AsyncSession, incident_id: int, runbook_id: int) -> None:
+    """Record which runbook this incident was given.
+
+    ``Q4`` and ``Q5`` both join through this column, so an incident that was
+    pinned a runbook but never recorded it is an incident that contributes
+    nothing to efficacy -- invisible in exactly the same way a runbook nobody
+    follows is.
+    """
+    await session.execute(
+        update(Incident).where(Incident.id == incident_id).values(runbook_id=runbook_id)
+    )
+
+
+async def record_correlation_feedback(
+    session: AsyncSession,
+    *,
+    incident_id: int,
+    alert_id: int | None,
+    action: str,
+    actor: str,
+    original_score: float | None,
+    original_reasons: list[Any] | None,
+) -> None:
+    """The labelled data that tunes ``merge_threshold`` (D3, W5-16).
+
+    The original score and reasons are stored, not just the correction. "A human
+    disagreed" is a fact; "a human disagreed with 0.71 on shared-service plus
+    time-proximity" is a data point you can tune against, and the difference is
+    whether the correction path is a feedback loop or a complaint box.
+    """
+    session.add(
+        CorrelationFeedback(
+            incident_id=incident_id,
+            alert_id=alert_id,
+            action=action,
+            actor=actor,
+            original_score=original_score,
+            original_reasons=original_reasons or [],
+        )
+    )
+
+
+async def alert_by_fingerprint(
+    session: AsyncSession, incident_id: int, fingerprint: str
+) -> Alert | None:
+    stmt = (
+        select(Alert)
+        .where(Alert.incident_id == incident_id)
+        .where(Alert.fingerprint == fingerprint)
+        .order_by(Alert.starts_at.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def record_timeline_event(
+    session: AsyncSession,
+    *,
+    incident_id: int,
+    intent: str,
+    description: str,
+    author_user_id: str | None = None,
+    confidence: float | None = None,
+    source_message_ts: str | None = None,
+    at: datetime | None = None,
+) -> None:
+    """An asserted timeline event, from a slash command rather than inference.
+
+    ``confidence`` is 1.0 for these and below 1.0 for everything the intent
+    ladder guessed. A PIR reading the timeline can therefore tell the difference
+    between "a human typed this" and "a regex thought this" -- which is exactly
+    the distinction a reader needs when a claim is contested.
+    """
+    values: dict[str, Any] = {
+        "incident_id": incident_id,
+        "intent": intent,
+        "description": description[:2000],
+        "author_user_id": author_user_id,
+        "confidence": confidence,
+        "source_message_ts": source_message_ts,
+    }
+    if at is not None:
+        values["time"] = at
+        await session.execute(pg_insert(TimelineEvent).values(**values))
+        return
+    # The hypertable partitions on `time`, so it cannot be left to a default
+    # that does not exist. now() is read in SQL rather than in Python for the
+    # same reason every other timestamp here is: one clock, and it is Postgres'.
+    await session.execute(
+        text(
+            "INSERT INTO timeline_events"
+            " (time, incident_id, intent, confidence, description, author_user_id,"
+            "  source_message_ts)"
+            " VALUES (now(), :incident_id, :intent, :confidence, :description,"
+            "         :author_user_id, :source_message_ts)"
+        ),
+        values,
+    )
