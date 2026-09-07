@@ -46,6 +46,11 @@ ALLOWED_TYPE_REFERENCES: frozenset[str] = frozenset(
         "adapters/chat/ratelimit.py",
         "adapters/chat/block_kit.py",
         "adapters/chat/factory.py",
+        # Transport and read-only surfaces. Both live under adapters/chat/
+        # for exactly this reason: the exemption stays a property of one
+        # directory rather than growing a list of scattered files.
+        "adapters/chat/socket_mode.py",
+        "adapters/chat/history.py",
     }
 )
 

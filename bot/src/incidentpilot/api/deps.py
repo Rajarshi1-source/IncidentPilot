@@ -15,6 +15,7 @@ from fastapi import Depends, Request
 
 from incidentpilot.config.settings import Settings
 from incidentpilot.orchestration.streams import StreamClient, StreamProducer
+from incidentpilot.transcript.ingestor import TranscriptIngestor
 
 
 def elapsed_s(request: Request) -> float:
@@ -45,6 +46,19 @@ def get_streams(request: Request) -> StreamProducer:
     return producer
 
 
+def get_ingestor(request: Request) -> TranscriptIngestor:
+    """The transcript ingestor built once in the lifespan.
+
+    Injected rather than constructed per request so the session factory, the
+    channel cache and the classifier's embedded exemplar index are all built
+    once -- and so a test can substitute a recording double without patching a
+    module global.
+    """
+    ingestor: TranscriptIngestor = request.app.state.ingestor
+    return ingestor
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 ValkeyDep = Annotated[StreamClient, Depends(get_valkey)]
 StreamsDep = Annotated[StreamProducer, Depends(get_streams)]
+IngestorDep = Annotated[TranscriptIngestor, Depends(get_ingestor)]

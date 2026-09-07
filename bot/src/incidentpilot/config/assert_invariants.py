@@ -67,6 +67,26 @@ def check(cfg: Settings) -> list[str]:
             "impact would be fabricated rather than computed (B-10)"
         )
 
+    # Socket Mode has no signature to verify and no network boundary in front of
+    # it: the trust model collapses to "we hold an app token". It is a genuinely
+    # good development transport -- no public URL, no tunnel -- which is exactly
+    # why it needs a check rather than a comment. The runner refuses to start
+    # too; this catches the misconfiguration before a single request is served.
+    if cfg.slack_socket_mode:
+        problems.append(
+            f"slack_socket_mode is True in environment {cfg.environment!r} -- Socket Mode "
+            "bypasses the signed HTTP receiver and its trust boundary (§16)"
+        )
+
+    # The 1/min conversations.history limit counts the app, workspace-wide.
+    # Shortening the period does not buy more calls; it buys 429s, and a 429
+    # spends the next window too.
+    if cfg.history_budget_period_s < 60:
+        problems.append(
+            f"history_budget_period_s is {cfg.history_budget_period_s}s; a non-Marketplace "
+            "Slack app gets one conversations.history call per minute (INV-02)"
+        )
+
     if cfg.signature_max_age_s > 300:
         problems.append(
             f"signature_max_age_s is {cfg.signature_max_age_s}s; the Slack replay window "

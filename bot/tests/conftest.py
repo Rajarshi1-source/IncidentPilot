@@ -38,6 +38,11 @@ class FakeValkey:
 
     def __init__(self) -> None:
         self.streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
+        # Plain keys, for the week 4 channel cache and the reconciler's history
+        # budget. Separate from ``streams`` because the two are separate data
+        # models in Valkey too, and a test that confuses them would pass for the
+        # wrong reason.
+        self.keys: dict[str, str] = {}
         self._seq = 0
         self.alive = True
 
@@ -59,6 +64,42 @@ class FakeValkey:
     async def ping(self) -> bool:
         if not self.alive:
             raise ConnectionError("fake valkey is down")
+        return True
+
+    async def get(self, key: str) -> str | None:
+        if not self.alive:
+            raise ConnectionError("fake valkey is down")
+        return self.keys.get(key)
+
+    async def set(
+        self,
+        key: str,
+        value: str,
+        *,
+        ex: int | None = None,
+        nx: bool = False,
+    ) -> bool | None:
+        """``nx`` is honoured because the history budget depends on it.
+
+        TTLs are accepted and ignored: no test here needs a key to expire, and a
+        fake that pretended to implement expiry would be a second, subtly
+        different clock in the suite.
+        """
+        if not self.alive:
+            raise ConnectionError("fake valkey is down")
+        if nx and key in self.keys:
+            return None
+        self.keys[key] = value
+        return True
+
+    async def delete(self, *keys: str) -> int:
+        if not self.alive:
+            raise ConnectionError("fake valkey is down")
+        return sum(1 for k in keys if self.keys.pop(k, None) is not None)
+
+    async def flushall(self) -> bool:
+        """What an eviction or a restart looks like (INV-04, B-07)."""
+        self.keys.clear()
         return True
 
     async def aclose(self) -> None:

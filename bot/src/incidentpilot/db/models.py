@@ -294,3 +294,65 @@ class SignalSample(Base):
     series: Mapped[str] = mapped_column(Text, primary_key=True)
     service: Mapped[str] = mapped_column(Text)
     value: Mapped[float] = mapped_column(Float)
+
+
+class SlackMessage(Base):
+    """The transcript. Our system of record for what was said (B-01, INV-02).
+
+    Written as each message arrives, never read back from Slack. Since 3 March
+    2026 ``conversations.history`` gives a non-Marketplace app 1 request/minute
+    and 15 messages per request, so reconstructing a 150-message incident at
+    resolve time would take ten minutes -- and would fail *silently*, returning
+    less than it used to with no error at all.
+
+    ``UNIQUE (channel_id, ts)`` is what turns Slack's at-least-once event
+    delivery into exactly-once storage. It is a constraint rather than a cache
+    check because a redelivery six hours later must still be rejected (INV-04).
+    """
+
+    __tablename__ = "slack_messages"
+    __table_args__ = (
+        UniqueConstraint("channel_id", "ts", name="uq_message_channel_ts"),
+        Index("idx_msg_incident", "incident_id", "ts"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("incidents.id", ondelete="CASCADE")
+    )
+    channel_id: Mapped[str] = mapped_column(Text)
+    # Slack's own id, stored as text: it is the citation anchor (``msg:{ts}``)
+    # and float round-tripping would eventually collide two messages a
+    # microsecond apart.
+    ts: Mapped[str] = mapped_column(Text)
+    thread_ts: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[str | None] = mapped_column(Text)
+    text: Mapped[str] = mapped_column(Text)
+    redacted_text: Mapped[str | None] = mapped_column(Text)  # what a model may see (W6, D6)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    received_at: Mapped[datetime] = mapped_column(TZ, server_default=func.now())
+
+
+class SlackMessageRevision(Base):
+    """Edits and deletes, appended -- never applied in place.
+
+    A PIR claim cites ``msg:{ts}``. If that message could be silently rewritten
+    the citation would stop being evidence: the document would say one thing,
+    the linked message another, and nothing would record that they ever agreed.
+    So the original row is immutable and every mutation becomes a row here.
+
+    ``UNIQUE (message_id, revision)`` makes a redelivered ``message_changed``
+    event a no-op instead of a second revision of the same edit.
+    """
+
+    __tablename__ = "slack_message_revisions"
+    __table_args__ = (UniqueConstraint("message_id", "revision", name="uq_message_revision"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("slack_messages.id", ondelete="CASCADE")
+    )
+    revision: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(Text)  # 'edited' | 'deleted'
+    text: Mapped[str | None] = mapped_column(Text)
+    observed_at: Mapped[datetime] = mapped_column(TZ, server_default=func.now())

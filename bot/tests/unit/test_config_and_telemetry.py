@@ -41,6 +41,8 @@ EXPECTED_METRICS = {
     "ip_brownout_buffered_total",
     "ip_outbox_dead_total",
     "ip_outbox_dispatched_total",
+    "ip_messages_stored_total",
+    "ip_slack_history_calls_total",
 }
 
 
@@ -163,3 +165,54 @@ def test_stdlib_logs_are_routed_through_structlog(capsys: pytest.CaptureFixture[
     logging.getLogger("uvicorn.error").warning("third party message")
     line = capsys.readouterr().out.strip().splitlines()[-1]
     assert json.loads(line)["event"] == "third party message"
+
+
+def test_socket_mode_is_rejected_outside_development() -> None:
+    """§16: Socket Mode has no signature to verify and no boundary in front of it.
+
+    Checked here as well as in the runner because a deployment must fail at
+    startup, not on the first event -- by which point it has been accepting
+    unauthenticated instructions from a WebSocket for however long it took
+    someone to notice.
+    """
+    cfg = Settings(
+        environment="prod",
+        chat_provider="slack",
+        metrics_provider="prometheus",
+        slack_socket_mode=True,
+    )
+    assert any("slack_socket_mode" in p for p in check(cfg))
+    assert not any("slack_socket_mode" in p for p in check(Settings(environment="dev")))
+
+
+def test_the_history_budget_cannot_be_shortened_in_production() -> None:
+    """Shortening it does not buy calls, it buys 429s -- and a 429 costs the
+    next window too (INV-02)."""
+    cfg = Settings(
+        environment="prod",
+        chat_provider="slack",
+        metrics_provider="prometheus",
+        history_budget_period_s=5,
+    )
+    assert any("history_budget_period_s" in p for p in check(cfg))
+
+
+def test_transcript_ratio_starts_unmeasured_not_zero() -> None:
+    """A fresh pod must not claim it lost the entire transcript.
+
+    prometheus_client Gauges read 0 from definition, and 0 on this SLI is
+    "every message is gone" -- which, with the tightest target in the table
+    behind it, would page someone on every deploy.
+    """
+    import math
+
+    from incidentpilot.telemetry.metrics import (
+        TRANSCRIPT_RATIO,
+        mark_transcript_ratio_unmeasured,
+    )
+
+    mark_transcript_ratio_unmeasured()
+    # No public reader on a Gauge; this is the value the scrape would expose.
+    value = TRANSCRIPT_RATIO._value.get()
+    assert math.isnan(value)
+    assert not (value < 0.9999), "a NaN must not satisfy an alert-rule comparison"

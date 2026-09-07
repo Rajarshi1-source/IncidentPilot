@@ -87,9 +87,17 @@ gate-g2: ## G2 — migrations round-trip; 40-alert storm to one incident
 gate-g3: ## G3 — 12 crash points, no duplicate channel on restart
 	@bash scripts/gate_g3.sh
 
+.PHONY: gate-g4
+gate-g4: ## G4 — 200 messages, 200 rows, zero conversations.history calls
+	@bash scripts/gate_g4.sh
+
 .PHONY: relay
 relay: ## Run the outbox relay (the only external writer)
 	$(UV) run python -m incidentpilot.orchestration.relay
+
+.PHONY: reconciler
+reconciler: ## Run the reconciler (the only conversations.history caller)
+	$(UV) run python -m incidentpilot.orchestration.reconciler
 
 .PHONY: migrate
 migrate: ## Apply migrations to head

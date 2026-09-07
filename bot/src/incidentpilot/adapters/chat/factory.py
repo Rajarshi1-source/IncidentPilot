@@ -48,3 +48,25 @@ def build_chat(cfg: Settings, *, valkey: Any = None) -> Any:
 
     log.info("chat.provider_resolved", provider="fake")
     return FakeChat()
+
+
+def build_history(cfg: Settings) -> Any:
+    """Return the configured history reader -- the reconciler's only Slack view.
+
+    A second factory rather than a method on the chat adapter, and that is the
+    whole point (INV-02): the object the relay holds has no ``fetch_history`` to
+    call, and the object that does is built somewhere the hot path never looks.
+    """
+    if cfg.chat_provider == "slack":
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from incidentpilot.adapters.chat.history import SlackHistory
+
+        token = cfg.slack_bot_token.get_secret_value() if cfg.slack_bot_token else ""
+        log.info("history.provider_resolved", provider="slack")
+        return SlackHistory(AsyncWebClient(token=token))
+
+    from incidentpilot.adapters.chat.history import FakeHistory
+
+    log.info("history.provider_resolved", provider="fake")
+    return FakeHistory()

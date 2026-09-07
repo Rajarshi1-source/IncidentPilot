@@ -1,0 +1,55 @@
+# Labelled exemplars for intent ladder layer 2 (W4-09, C-10).
+#
+# Layer 1 (domain/intent.py) is a regex list: precise, free, and brittle in
+# exactly one way -- it only fires on the phrasings someone thought to write
+# down. These are the phrasings people actually use that the rules miss, scored
+# by similarity rather than matched literally.
+#
+# Curation rules, so this file stays a signal rather than a dumping ground:
+#   * one intent per exemplar, no hedging
+#   * write what a responder types at 3 a.m., not what documentation says
+#   * do NOT add a phrase layer 1 already matches -- that is a rule change, and
+#     a rule is cheaper than an embedding call
+#   * every addition is a change to classification behaviour, so it belongs in a
+#     commit with the fixture that motivated it
+#
+# Code-switched English/Hindi is deliberately under-represented here and the gap
+# is measured rather than papered over (§8.3, week 7 corpus).
+
+remediation_start:
+  - "rolling the deploy back now"
+  - "putting the previous version back out"
+  - "taking the bad node out of the pool"
+  - "bouncing the pods to clear it"
+  - "cutting traffic over to the standby"
+  - "reverting the config change from this morning"
+  - "bumping the replica count to absorb it"
+  - "turning the feature flag off"
+
+remediation_end:
+  - "previous version is back out there"
+  - "the revert has landed"
+  - "traffic is fully on the standby now"
+  - "flag is off everywhere"
+  - "pods came back up clean"
+
+recovery_signal:
+  - "errors are normal again now"
+  - "the graphs have come down"
+  - "queue has drained"
+  - "latency is where it was before"
+  - "no new alerts in the last ten minutes"
+  - "customers stopped reporting it"
+
+investigation:
+  - "pulling the last hour of traces"
+  - "comparing this against yesterday"
+  - "does anyone know what shipped this morning"
+  - "the numbers do not line up with the alert"
+  - "reading through the diff now"
+
+escalation:
+  - "this is bigger than the two of us"
+  - "someone from the database team needs to be here"
+  - "getting the on call for payments involved"
+  - "we are out of our depth on this one"

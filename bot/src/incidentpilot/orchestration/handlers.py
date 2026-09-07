@@ -83,6 +83,7 @@ class ChatHandlers:
             "post_merge_notice": self.post_merge_notice,
             "post_storm_update": self.post_storm_update,
             "archive_channel": self.archive_channel,
+            "capture_metric_snapshot": self.capture_metric_snapshot,
         }
 
     # -- helpers ---------------------------------------------------------
@@ -267,6 +268,50 @@ class ChatHandlers:
         OUTBOX_DISPATCHED.labels(action="archive_channel").inc()
         log.info("channel.archived", incident_id=incident["id"])
         return {"archived": True}
+
+    async def capture_metric_snapshot(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Freeze the metric window around a remediation or recovery moment.
+
+        Enqueued by the transcript ingestor when a message crosses a
+        ``SNAPSHOT_TRIGGERS`` intent (W4-05). The window it names is what week 6
+        computes impact over, and it exists as an outbox row rather than as an
+        inline Prometheus query for one reason: a slow metrics backend must
+        never be able to turn into dropped transcript.
+
+        The sampler itself is W6-03. Until then this records the request and
+        succeeds, because the alternative -- no handler -- makes the relay mark
+        every snapshot row dead on arrival (eight retries it can never win), and
+        a dead-letter queue full of rows that were never wrong teaches people to
+        stop reading it.
+        """
+        payload = row.get("payload") or {}
+        OUTBOX_DISPATCHED.labels(action="capture_metric_snapshot").inc()
+        log.info(
+            "snapshot.deferred",
+            incident_id=row["incident_id"],
+            reason=payload.get("reason"),
+            at=payload.get("at"),
+        )
+        return {"recorded": True, "sampler": "W6-03", "at": payload.get("at")}
+
+    # -- called by the reconciler, not by the relay ----------------------
+
+    async def archive_orphan_channel(self, channel_id: str) -> dict[str, Any]:
+        """Archive a ``#inc-*`` channel that no incident row claims (W4-12).
+
+        Not an outbox action, and the reason is structural rather than a
+        shortcut: ``outbox_events.incident_id`` is NOT NULL, and an orphan is by
+        definition a channel with no incident to hang the row off. So the write
+        stays here -- inside the one module permitted to touch a chat adapter --
+        and ``orchestration/reconciler.py`` calls it directly. INV-03's actual
+        guarantee holds; what does not apply is the outbox's raced-writer
+        protection, which an idempotent archive run by a single scheduled job
+        does not need.
+        """
+        await self._chat.archive_channel(channel_id)
+        OUTBOX_DISPATCHED.labels(action="archive_orphan_channel").inc()
+        log.warning("channel.orphan_archived", channel_id=channel_id)
+        return {"archived": channel_id}
 
 
 def build_handlers(

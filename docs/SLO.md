@@ -14,9 +14,9 @@ Status column reflects what is actually instrumented today, not what is planned.
 |---|---|---|---|---|
 | **Ingest availability** | `1 - (5xx on /webhooks/* ÷ total)` | **99.9 %** | 43 min | ✅ W1 |
 | **Ingest latency** | p99 webhook ack | **< 250 ms** | — | ✅ W1 |
-| **Time-to-war-room** | alert accepted → channel created + responder invited + runbook pinned | **p95 < 10 s** | — | ⏳ W3 |
+| **Time-to-war-room** | alert accepted → channel created + responder invited + runbook pinned | **p95 < 10 s** | — | ✅ W3 |
 | **Responder notified** | alert accepted → responder DM delivered | **p95 < 30 s** | — | ⏳ W5 |
-| **Transcript completeness** | messages in store ÷ messages in channel (nightly reconcile) | **≥ 99.99 %** | see below | ⏳ W4 |
+| **Transcript completeness** | of the newest page Slack reports, the fraction we hold (sampled, see ADR 0003) | **≥ 99.99 %** | see below | ✅ W4 |
 | **PIR delivery** | resolve → draft posted, any layer including skeleton | **99.5 %, p95 < 90 s** | 3.6 h | ⏳ W6 |
 | **PIR grounding** | PIRs with zero uncited claims | **100 % — hard invariant** | **zero** | ⏳ W6 |
 | **Cost per incident** | LLM spend ÷ incidents | **< $0.50** | breaker at 2× | ⏳ W6 |
@@ -33,6 +33,15 @@ data-collection system is measured in data, not in HTTP 200s.
 This is why it has the tightest target in the table. Four nines on a ~5 000
 message/day transcript still permits half a message a day; anything looser and
 the grounding guarantee stops meaning anything.
+
+**It is measured as a sample, and that is stated rather than glossed.** Slack
+gives a non-Marketplace app one `conversations.history` call per minute and
+fifteen messages per call, so counting a channel is not an available operation --
+fourteen paged requests for a 200-message war room. The reconciler compares the
+**newest page** of one channel per pass against what we hold, round-robin. That
+detects a live ingestion failure quickly, which is what the SLO is for, and
+would not detect one message lost three hours ago. ADR 0003 records why, and
+what would change if the app were ever Marketplace-approved.
 
 ### PIR grounding has a zero error budget
 

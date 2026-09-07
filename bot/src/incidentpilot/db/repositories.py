@@ -8,6 +8,7 @@ count).
 
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime
 from typing import Any
 
@@ -15,7 +16,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from incidentpilot.db.models import Alert, Incident, OutboxEvent, Service
+from incidentpilot.db.models import Alert, Incident, OutboxEvent, Service, SlackMessage
 from incidentpilot.domain.correlation import OpenIncident
 from incidentpilot.domain.normalize import NormalizedAlert
 from incidentpilot.domain.states import TERMINAL
@@ -282,3 +283,246 @@ async def get_for_update(session: AsyncSession, incident_id: int) -> Incident | 
     """SELECT ... FOR UPDATE. The row lock the transition depends on."""
     stmt = select(Incident).where(Incident.id == incident_id).with_for_update()
     return (await session.execute(stmt)).scalars().first()
+
+
+# --- the transcript (W4) -----------------------------------------------------
+
+# Six hours: longer than nearly every incident, so the mapping is a cache hit
+# for the whole life of a war room.
+CHANNEL_CACHE_TTL_S = 6 * 3600
+
+# Negative answers expire in a minute, not six hours. A channel becomes an
+# incident channel a fraction of a second after conversations.create returns,
+# and a six-hour negative cache would blackhole the opening messages of an
+# incident -- the ones that say what someone saw first, which are the ones a PIR
+# most wants to cite.
+CHANNEL_NEGATIVE_TTL_S = 60
+
+# Distinguishes "cached: not ours" from "not cached". Storing an empty string
+# would be indistinguishable from a miss.
+NOT_AN_INCIDENT = "-"
+
+
+class ChannelCache:
+    """``channel_id -> incident_id``, cached in Valkey, arbitrated by Postgres.
+
+    INV-04: the cache is an accelerator, never the source of truth. Every miss
+    -- and every Valkey failure -- falls through to the database, so
+    ``FLUSHALL`` costs latency and nothing else. A design that stored the
+    mapping only in the cache would lose the transcript of every live incident
+    on an eviction, and the loss would be silent (B-07).
+    """
+
+    def __init__(
+        self,
+        valkey: Any,
+        sessions: Any,
+        *,
+        ttl_s: int = CHANNEL_CACHE_TTL_S,
+        negative_ttl_s: int = CHANNEL_NEGATIVE_TTL_S,
+        prefix: str = "ip:chan",
+    ) -> None:
+        self._valkey = valkey
+        self._sessions = sessions
+        self._ttl_s = ttl_s
+        self._negative_ttl_s = negative_ttl_s
+        self._prefix = prefix
+
+    def _key(self, channel_id: str) -> str:
+        return f"{self._prefix}:{channel_id}"
+
+    async def incident_for_channel(self, channel_id: str) -> int | None:
+        cached = await self._get(channel_id)
+        if cached == NOT_AN_INCIDENT:
+            return None
+        if cached is not None:
+            return int(cached)
+
+        async with self._sessions() as session:
+            incident_id = await incident_id_for_channel(session, channel_id)
+
+        await self._put(channel_id, incident_id)
+        return incident_id
+
+    async def invalidate(self, channel_id: str) -> None:
+        """Drop one mapping. Called when a channel is recorded onto an incident.
+
+        Suppressed rather than raised: a cache that cannot be cleared costs at
+        most six hours of a stale mapping, and the database is the arbiter
+        anyway (INV-04).
+        """
+        with contextlib.suppress(Exception):
+            await self._valkey.delete(self._key(channel_id))
+
+    async def _get(self, channel_id: str) -> str | None:
+        # Valkey unreachable? Ingest must keep working: a dropped message is
+        # unrecoverable, an uncached lookup costs a millisecond.
+        value = None
+        with contextlib.suppress(Exception):
+            value = await self._valkey.get(self._key(channel_id))
+        if value is None:
+            return None
+        return value.decode() if isinstance(value, bytes) else str(value)
+
+    async def _put(self, channel_id: str, incident_id: int | None) -> None:
+        value = NOT_AN_INCIDENT if incident_id is None else str(incident_id)
+        ttl = self._negative_ttl_s if incident_id is None else self._ttl_s
+        with contextlib.suppress(Exception):
+            await self._valkey.set(self._key(channel_id), value, ex=ttl)
+
+
+async def incident_id_for_channel(session: AsyncSession, channel_id: str) -> int | None:
+    """The database's answer, which is the only authoritative one (INV-04)."""
+    stmt = select(Incident.id).where(Incident.chat_channel_id == channel_id)
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def store_message(
+    session: AsyncSession,
+    *,
+    incident_id: int,
+    channel_id: str,
+    ts: str,
+    text_body: str,
+    thread_ts: str | None = None,
+    user_id: str | None = None,
+    raw: dict[str, Any] | None = None,
+) -> int | None:
+    """Persist one message. Returns its id, or None if it was a redelivery.
+
+    ``ON CONFLICT DO NOTHING`` on ``(channel_id, ts)`` is the whole conversion
+    from at-least-once delivery to exactly-once storage. Returning None rather
+    than raising is deliberate: a redelivery is the *normal* shape of the Events
+    API under retry, not an error condition, and treating it as one would fill
+    the logs during exactly the minute nobody can afford noise.
+    """
+    stmt = (
+        pg_insert(SlackMessage)
+        .values(
+            incident_id=incident_id,
+            channel_id=channel_id,
+            ts=ts,
+            thread_ts=thread_ts,
+            user_id=user_id,
+            text=text_body,
+            raw=raw or {},
+        )
+        .on_conflict_do_nothing(constraint="uq_message_channel_ts")
+        .returning(SlackMessage.id)
+    )
+    return (await session.execute(stmt)).scalar()
+
+
+# Append-only by construction, and idempotent under redelivery.
+#
+# Two mechanisms, because they cover different failures. The revision number is
+# computed *inside* the INSERT, so two concurrent edits cannot both read "1" and
+# both write it -- the loser hits uq_message_revision and DO NOTHING makes it a
+# no-op. And the NOT EXISTS guard compares against the *latest* revision, so the
+# Events API redelivering the same message_changed event does not append a
+# second identical row.
+#
+# Comparing against the latest rather than against any prior revision is
+# deliberate: an edit sequence A -> B -> A is three real revisions and must stay
+# three, while a redelivery is always identical to the row immediately before it.
+APPEND_REVISION = text(
+    """
+    INSERT INTO slack_message_revisions (message_id, revision, kind, text)
+    SELECT m.id, COALESCE(latest.revision, 0) + 1, :kind, :text
+      FROM slack_messages m
+      LEFT JOIN LATERAL (
+           SELECT r.revision, r.kind, r.text
+             FROM slack_message_revisions r
+            WHERE r.message_id = m.id
+            ORDER BY r.revision DESC
+            LIMIT 1
+      ) latest ON TRUE
+     WHERE m.channel_id = :channel_id
+       AND m.ts = :ts
+       AND (latest.revision IS NULL
+            OR latest.kind IS DISTINCT FROM :kind
+            OR latest.text IS DISTINCT FROM :text)
+    ON CONFLICT ON CONSTRAINT uq_message_revision DO NOTHING
+    RETURNING id, revision
+    """
+)
+
+
+async def append_revision(
+    session: AsyncSession,
+    *,
+    channel_id: str,
+    ts: str,
+    kind: str,
+    text_body: str | None,
+) -> int | None:
+    """Record an edit or a delete as a new revision. Returns the revision number.
+
+    The original row is never touched. A PIR cites ``msg:{ts}``; a message that
+    could be rewritten in place would make that citation a claim about the
+    present rather than evidence about the past, and the difference is the whole
+    point of the document.
+
+    Returns None when the message is unknown -- an edit to something that
+    arrived before the bot joined -- or when this exact revision already exists.
+    """
+    row = (
+        await session.execute(
+            APPEND_REVISION,
+            {"channel_id": channel_id, "ts": ts, "kind": kind, "text": text_body},
+        )
+    ).first()
+    return int(row.revision) if row else None
+
+
+async def stored_message_count(session: AsyncSession, channel_id: str) -> int:
+    """Rows we hold for a channel -- the numerator of transcript completeness."""
+    result = await session.execute(
+        text("SELECT count(*) FROM slack_messages WHERE channel_id = :c"),
+        {"c": channel_id},
+    )
+    return int(result.scalar_one())
+
+
+async def active_incident_channels(session: AsyncSession) -> dict[str, int]:
+    """``chat_channel_id -> incident_id`` for every non-terminal incident.
+
+    The reconciler's work list: the channels whose completeness ratio is still
+    changing, and therefore the only ones worth spending the history budget on.
+    """
+    stmt = (
+        select(Incident.chat_channel_id, Incident.id)
+        .where(Incident.chat_channel_id.isnot(None))
+        .where(Incident.state.notin_([s.value for s in TERMINAL]))
+    )
+    rows = (await session.execute(stmt)).all()
+    return {str(channel_id): int(incident_id) for channel_id, incident_id in rows}
+
+
+async def known_channel_ids(session: AsyncSession) -> set[str]:
+    """Every channel any incident has ever owned, terminal or not.
+
+    Orphan detection asks "does *any* incident row know about this channel",
+    not "is one open" -- archiving the channel of a closed incident because it
+    is no longer active would delete the record people go back to read (B-08).
+    """
+    stmt = select(Incident.chat_channel_id).where(Incident.chat_channel_id.isnot(None))
+    return {str(cid) for cid in (await session.execute(stmt)).scalars().all()}
+
+
+async def held_message_ts(
+    session: AsyncSession, channel_id: str, candidates: list[str]
+) -> set[str]:
+    """Which of these Slack timestamps we already store.
+
+    A set intersection rather than a count comparison: equal counts over
+    different timestamps is a real failure mode -- one message lost and one
+    stored twice -- and a count-only check would report it as healthy.
+    """
+    if not candidates:
+        return set()
+    rows = await session.execute(
+        text("SELECT ts FROM slack_messages WHERE channel_id = :c AND ts = ANY(:ts)"),
+        {"c": channel_id, "ts": list(candidates)},
+    )
+    return {str(ts) for ts in rows.scalars().all()}

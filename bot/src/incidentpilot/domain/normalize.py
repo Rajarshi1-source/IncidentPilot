@@ -278,3 +278,30 @@ def to_stream_fields(alert: NormalizedAlert) -> dict[str, str]:
         "generator_url": alert.generator_url or "",
         "raw": json.dumps(alert.raw, sort_keys=True, default=str),
     }
+
+
+def slack_ts_to_dt(ts: str) -> datetime:
+    """Slack's ``"1757000000.000100"`` message id, as an aware UTC datetime.
+
+    The sibling of ``parse_timestamp`` for the transcript side. Slack's ``ts``
+    is a unix timestamp with microsecond precision *and* the message's primary
+    key, which is why it is stored as text and converted here rather than being
+    parsed into a column: two messages a microsecond apart are two different
+    citations, and float round-tripping would eventually collide them.
+
+    Malformed input raises rather than defaulting. A timeline row at the unix
+    epoch is worse than no row -- it lands outside every incident window and the
+    hole is invisible.
+
+    ``OSError`` and ``OverflowError`` are caught alongside the obvious
+    ``ValueError`` because a numerically valid but out-of-range value --
+    ``"1757000000000.000100"``, a ts with three digits too many -- fails inside
+    the platform's C library rather than in the float conversion, and on Windows
+    it surfaces as ``OSError: [Errno 22]``. Letting that escape would turn a
+    malformed event into a 500 and an unbounded Slack retry loop instead of a
+    logged, dropped message.
+    """
+    try:
+        return datetime.fromtimestamp(float(ts), UTC)
+    except (TypeError, ValueError, OSError, OverflowError) as exc:
+        raise MalformedPayload(f"unparseable slack ts: {ts!r}") from exc

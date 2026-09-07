@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     alertmanager_bearer: SecretStr | None = None
     paging_webhook_secret: SecretStr | None = None
     deploy_bearer: SecretStr | None = None
+    # Socket Mode only. An app-level token, not the bot token: it opens the
+    # WebSocket in development so no public URL is needed, and it is absent
+    # in production where the HTTP receiver is the one that runs.
+    slack_app_token: SecretStr | None = None
+    slack_socket_mode: bool = False
     signature_max_age_s: int = 300
 
     # --- governance -----------------------------------------------------
@@ -64,6 +69,15 @@ class Settings(BaseSettings):
     # --- fatigue (D5) ---------------------------------------------------
     fatigue_lookback_h: int = 8
     fatigue_max_pages: int = 2
+
+    # --- transcript and reconciliation (W4) ------------------------------
+    # Slack allows a non-Marketplace app one conversations.history call per
+    # minute, workspace-wide. The period is configurable so a Marketplace-
+    # approved deployment can lower it -- never so a demo can cheat past it.
+    history_budget_period_s: int = 60
+    reconcile_interval_s: int = 900
+    channel_cache_ttl_s: int = 6 * 3600
+    intent_layer2_enabled: bool = True
 
     # --- streams --------------------------------------------------------
     stream_maxlen: int = 100_000

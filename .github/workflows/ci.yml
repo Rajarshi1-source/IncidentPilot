@@ -137,6 +137,15 @@ jobs:
         run: uv run pytest tests/unit/test_domain_purity.py -q
         working-directory: bot
 
+      # INV-02, also on its own, and for the same reason. B-01 -- fetching the
+      # Slack thread at resolve time -- is the defect the whole architecture is
+      # shaped around, and its failure mode is silent: no 429, no exception,
+      # just a transcript that is quietly shorter than it should be. Needs no
+      # database, so it runs before the slower jobs.
+      - name: INV-02 - conversations.history is never called on the hot path
+        run: uv run pytest tests/integration/test_no_history_calls.py -q
+        working-directory: bot
+
       - name: Unit tests
         run: uv run pytest tests/unit -q --cov=incidentpilot --cov-report=term-missing
         working-directory: bot
@@ -150,6 +159,16 @@ jobs:
         working-directory: bot
         env:
           IP_TEST_VALKEY_URL: redis://localhost:6379/15
+          IP_TEST_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
+          IP_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
+
+      # G4 as a job step rather than only as a make target, because a gate that
+      # only runs when someone remembers to run it is not a gate. The script
+      # asserts the skip count too: pytest exits 0 when every test skips, and a
+      # database that failed to come up looks exactly like that.
+      - name: G4 - 200 messages, 200 rows, zero history calls
+        run: bash scripts/gate_g4.sh
+        env:
           IP_TEST_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
           IP_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
 

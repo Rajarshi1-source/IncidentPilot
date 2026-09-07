@@ -180,6 +180,45 @@ OUTBOX_DISPATCHED = Counter(
 )
 
 
+# --- transcript (W4, B-01) ---------------------------------------------------
+# The evidence that G4 actually held in production rather than only in CI. Rows
+# stored is the numerator of ip_transcript_completeness; without it a dip in the
+# ratio cannot be attributed to lost messages versus a miscounted denominator.
+MESSAGES_STORED = Counter(
+    "ip_messages_stored_total",
+    "Transcript rows written as events arrived, by kind (message, revision).",
+    ["kind"],
+    registry=REGISTRY,
+)
+
+# Must stay at zero for every label except reconciler. This is INV-02 expressed
+# as a time series: the unit test proves it for the code that exists today, this
+# proves it for the code that is running right now.
+HISTORY_CALLS = Counter(
+    "ip_slack_history_calls_total",
+    "Calls to conversations.history / conversations.replies, by caller.",
+    ["caller"],
+    registry=REGISTRY,
+)
+
+
 def set_degradation_level(level: int) -> None:
     """Single writer for the degradation gauge, so the value cannot drift."""
     DEGRADATION_LEVEL.set(level)
+
+
+def mark_transcript_ratio_unmeasured() -> None:
+    """Publish NaN until the reconciler has actually measured something.
+
+    A prometheus_client Gauge reads 0 from the moment it is defined, so a fresh
+    pod would expose ``ip_transcript_completeness 0`` -- indistinguishable, to a
+    dashboard or an alert rule, from having lost the entire transcript. Since
+    this SLI has the tightest target in docs/SLO.md, that would page someone
+    within a minute of every deploy, and people who get paged by deploys stop
+    reading the alert.
+
+    NaN is the Prometheus idiom for "no data": comparisons against it are false,
+    so no rule fires, and a graph shows a gap rather than a cliff. The first
+    reconcile pass replaces it with a real number.
+    """
+    TRANSCRIPT_RATIO.set(float("nan"))

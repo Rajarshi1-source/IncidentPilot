@@ -18,15 +18,22 @@ from redis.asyncio import Redis
 
 from incidentpilot import __version__
 from incidentpilot.api import health
-from incidentpilot.api.webhooks import alertmanager, paging
+from incidentpilot.api.webhooks import alertmanager, paging, slack
 from incidentpilot.config.assert_invariants import assert_invariants
 from incidentpilot.config.settings import Settings
 from incidentpilot.config.settings import settings as default_settings
+from incidentpilot.db import repositories as repo
+from incidentpilot.db.engine import build_engine, build_session_factory
 from incidentpilot.orchestration.streams import StreamClient, StreamProducer
 from incidentpilot.runtime import configure_event_loop
 from incidentpilot.telemetry.logging import configure_logging, get_logger, reset_context
-from incidentpilot.telemetry.metrics import set_degradation_level
+from incidentpilot.telemetry.metrics import (
+    mark_transcript_ratio_unmeasured,
+    set_degradation_level,
+)
 from incidentpilot.telemetry.tracing import configure_tracing, current_trace_id
+from incidentpilot.transcript.classifier import IntentClassifier
+from incidentpilot.transcript.ingestor import TranscriptIngestor
 
 # Must run before anything opens an async connection (Windows/psycopg).
 configure_event_loop()
@@ -87,9 +94,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             wal_stream=cfg.stream_alerts_wal,
         )
 
+    # The transcript write path. Slack now pushes messages at this process,
+    # and every one of them is a database write -- so the API owns an engine
+    # from week 4 onward, where before it only produced onto a stream.
+    #
+    # ``build_engine`` opens no connection, so a clean clone with no database
+    # still starts; the first message event is what discovers a broken DSN, and
+    # it discovers it as a 5xx that makes Slack redeliver rather than as a
+    # startup crash loop.
+    if not hasattr(app.state, "sessions"):
+        app.state.sessions = build_session_factory(build_engine(cfg))
+
+    if not hasattr(app.state, "ingestor"):
+        app.state.ingestor = TranscriptIngestor(
+            app.state.sessions,
+            repo.ChannelCache(app.state.valkey, app.state.sessions, ttl_s=cfg.channel_cache_ttl_s),
+            classifier=IntentClassifier() if cfg.intent_layer2_enabled else None,
+        )
+
     app.state.shutting_down = False
     _install_shutdown_handler(app)
     set_degradation_level(0)
+    mark_transcript_ratio_unmeasured()
 
     log.info(
         "startup.complete",
@@ -113,6 +139,8 @@ def create_app(
     *,
     valkey: StreamClient | None = None,
     streams: StreamProducer | None = None,
+    sessions: Any = None,
+    ingestor: Any = None,
 ) -> FastAPI:
     """Build the application.
 
@@ -135,6 +163,10 @@ def create_app(
         app.state.valkey = valkey
     if streams is not None:
         app.state.streams = streams
+    if sessions is not None:
+        app.state.sessions = sessions
+    if ingestor is not None:
+        app.state.ingestor = ingestor
 
     @app.middleware("http")
     async def timing_and_context(request: Request, call_next: Any) -> Response:
@@ -161,6 +193,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(alertmanager.router)
     app.include_router(paging.router)
+    app.include_router(slack.router)
 
     return app
 
