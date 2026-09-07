@@ -39,6 +39,10 @@ jobs:
               # by code -- an edit that breaks a step marker breaks D4's
               # efficacy numbers, so it belongs in the bot's test run.
               - 'runbooks/**'
+            # B-11: this filter drives week 7's eval gate, and both paths now
+            # exist -- the prompt registry and models.yaml landed in week 6. A
+            # path filter pointing at nothing is the same defect as the
+            # `head_commit.modified` check it replaced.
             prompts:
               - 'bot/src/incidentpilot/pir/prompts/**'
               - 'bot/src/incidentpilot/config/models.yaml'
@@ -192,6 +196,16 @@ jobs:
       # healthy page is the silent failure the gate exists to catch.
       - name: G5 - the on-call ladder, announced at every rung
         run: bash scripts/gate_g5.sh
+        env:
+          IP_TEST_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
+          IP_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
+
+      # The flagship. Both halves: a blocked provider still posts a document,
+      # and a working one posts nothing that is not cited. G6 also re-runs the
+      # INV-07 grep, because a gate that depends on another job having run is
+      # not a gate.
+      - name: G6 - impact computed first, and the grounded PIR
+        run: bash scripts/gate_g6.sh
         env:
           IP_TEST_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot
           IP_DATABASE_URL: postgresql+psycopg://ip:ip@localhost:5432/incidentpilot

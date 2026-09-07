@@ -97,6 +97,18 @@ class FakeValkey:
             raise ConnectionError("fake valkey is down")
         return sum(1 for k in keys if self.keys.pop(k, None) is not None)
 
+    async def incrbyfloat(self, key: str, amount: float) -> float:
+        """The budget breaker's counter. Float, because spend is not integral."""
+        if not self.alive:
+            raise ConnectionError("fake valkey is down")
+        current = float(self.keys.get(key, "0") or 0)
+        self.keys[key] = str(current + amount)
+        return current + amount
+
+    async def expire(self, key: str, ttl: int) -> bool:
+        """Accepted and ignored, like `ex=` on set -- see the note there."""
+        return key in self.keys
+
     async def flushall(self) -> bool:
         """What an eviction or a restart looks like (INV-04, B-07)."""
         self.keys.clear()

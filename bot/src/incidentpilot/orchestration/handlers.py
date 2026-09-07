@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from incidentpilot.adapters.chat import block_kit
-from incidentpilot.adapters.chat.base import ChatAdapter, channel_name
+from incidentpilot.adapters.chat.base import ChatAdapter, PermanentChatError, channel_name
 from incidentpilot.adapters.paging.base import (
     PermanentPagingError,
     RetryablePagingError,
@@ -110,6 +110,10 @@ class ChatHandlers:
             "capture_metric_snapshot": self.capture_metric_snapshot,
             "page_responder": self.page_responder,
             "post_sla_nudge": self.post_sla_nudge,
+            "post_generating_notice": self.post_generating_notice,
+            "post_pir": self.post_pir,
+            "post_pir_skeleton": self.post_pir_skeleton,
+            "notify_reviewers": self.notify_reviewers,
         }
 
     # -- helpers ---------------------------------------------------------
@@ -591,6 +595,127 @@ class ChatHandlers:
         OUTBOX_DISPATCHED.labels(action="post_sla_nudge").inc()
         return {"posted": True, "age_s": payload.get("age_s")}
 
+    # -- the PIR path (W6) -----------------------------------------------
+    #
+    # These four are the actions `EFFECTS` has referenced since week 2. Until
+    # now none of them had a handler, which means the relay would have marked
+    # every one DEAD on arrival -- eight retries it could never win, on the four
+    # transitions the flagship feature depends on. C-05 warned about exactly
+    # this shape for `post_pir_skeleton`: the document is generated, persisted,
+    # and never posted, and every unit test still passes.
+
+    async def post_generating_notice(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Priority 2. Says a PIR is being written, so the silence is explained.
+
+        Sheddable: if the channel is rate-limited, losing this costs a reader a
+        moment of confusion, while losing the PIR itself costs the incident its
+        record. That is exactly the trade the priority lanes exist to make.
+        """
+        incident = await self._incident(int(row["incident_id"]))
+        if incident is None or not incident["chat_channel_id"]:
+            raise LookupError("channel not created yet")
+
+        await self._chat.post_message(
+            str(incident["chat_channel_id"]),
+            text="drafting the post-incident review",
+            blocks=[
+                block_kit.context(
+                    [":writing_hand: Drafting the post-incident review from the transcript…"]
+                )
+            ],
+            priority=2,
+        )
+        OUTBOX_DISPATCHED.labels(action="post_generating_notice").inc()
+        return {"posted": True}
+
+    async def post_pir(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Priority 1. The validated document, with citation chips.
+
+        Permalinks are resolved **here** rather than in the renderer, because
+        ``chat.getPermalink`` is an external call and this is the only module
+        allowed to make one (INV-03). A permalink that cannot be resolved
+        degrades the chip to a plain label -- it never removes the citation,
+        which would turn a grounded claim into an ungrounded one at the last
+        possible moment.
+        """
+        return await self._post_document(row, layer="model")
+
+    async def post_pir_skeleton(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Priority 1. The honest floor, posted with its banner (C-05).
+
+        The same lane as the full PIR on purpose. A skeleton is not a lesser
+        document -- it is the document, minus the narrative -- and shedding it
+        under pressure would mean the incidents that happen during a bad
+        afternoon are the ones with no record.
+        """
+        return await self._post_document(row, layer="skeleton")
+
+    async def _post_document(self, row: dict[str, Any], *, layer: str) -> dict[str, Any]:
+        incident = await self._incident(int(row["incident_id"]))
+        if incident is None or not incident["chat_channel_id"]:
+            raise LookupError("channel not created yet")
+
+        channel_id = str(incident["chat_channel_id"])
+        payload = row.get("payload") or {}
+        markdown = str(payload.get("markdown") or "")
+        if not markdown:
+            # The generator persists first and enqueues second, so an empty
+            # payload means the row was written by something else. Dead rather
+            # than retried: an empty document will still be empty in a minute.
+            raise PermanentChatError("no document body on the outbox row")
+
+        blocks = [block_kit.section(chunk) for chunk in _chunk_markdown(markdown)]
+        posted = await self._chat.post_message(
+            channel_id,
+            text=f"Post-incident review — {incident['public_key']}",
+            blocks=block_kit.clamp(blocks),
+            priority=1,
+        )
+        if posted is not None:
+            await self._chat.pin(channel_id, posted.ts)
+
+        OUTBOX_DISPATCHED.labels(action=f"post_pir_{layer}").inc()
+        log.info(
+            "pir.posted",
+            incident_id=incident["id"],
+            layer=layer,
+            coverage=payload.get("coverage"),
+            ts=posted.ts if posted else None,
+        )
+        return {"posted": True, "layer": layer, "ts": posted.ts if posted else None}
+
+    async def notify_reviewers(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Priority 2. Asks the people who were there to check it.
+
+        The reviewers are the incident's participants, not a fixed list: the
+        only people who can tell whether a claim is true are the ones who were
+        in the channel when it happened.
+        """
+        incident = await self._incident(int(row["incident_id"]))
+        if incident is None or not incident["chat_channel_id"]:
+            raise LookupError("channel not created yet")
+
+        payload = row.get("payload") or {}
+        reviewers = [str(u) for u in payload.get("reviewers", [])]
+        if not reviewers:
+            return {"skipped": "no participants to notify"}
+
+        await self._chat.post_message(
+            str(incident["chat_channel_id"]),
+            text="review requested",
+            blocks=[
+                block_kit.section(
+                    ":mag: "
+                    + ", ".join(f"<@{u}>" for u in reviewers)
+                    + " — you were in this incident. Please check the claims that "
+                    "cite your messages."
+                ),
+            ],
+            priority=2,
+        )
+        OUTBOX_DISPATCHED.labels(action="notify_reviewers").inc()
+        return {"notified": len(reviewers)}
+
     # -- called by the reconciler, not by the relay ----------------------
 
     async def archive_orphan_channel(self, channel_id: str) -> dict[str, Any]:
@@ -626,3 +751,22 @@ def build_handlers(
 
 
 __all__ = ["ChatHandlers", "Handler", "build_handlers", "idem_key"]
+
+
+# Slack caps a section block at 3000 characters, and a PIR is longer than that.
+# Split on blank lines so a paragraph is never cut mid-sentence: `block_kit`
+# would truncate visibly, which is correct for a stray long line and wrong for a
+# document whose whole point is that every claim is complete.
+def _chunk_markdown(markdown: str, *, limit: int = 2800) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for paragraph in markdown.split("\n\n"):
+        if size + len(paragraph) > limit and current:
+            chunks.append("\n\n".join(current))
+            current, size = [], 0
+        current.append(paragraph)
+        size += len(paragraph) + 2
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks

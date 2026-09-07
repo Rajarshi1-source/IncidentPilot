@@ -30,9 +30,10 @@ import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field
 
 from incidentpilot.domain.intent import (
     SUMMARY_CHARS,
@@ -235,3 +236,66 @@ __all__: list[str] = [
     "cosine",
     "load_exemplars",
 ]
+
+
+# --- layer 3: the `extract` role (W6-14, C-10) --------------------------------
+
+
+class ExtractedIntent(BaseModel):
+    """What the ``extract`` role is allowed to return.
+
+    A closed enum and a bounded summary, because the point of layer 3 is to
+    classify a message the cheap layers could not -- not to let a model invent a
+    new taxonomy halfway down a transcript.
+    """
+
+    kind: IntentKind
+    summary: str = Field(min_length=0, max_length=SUMMARY_CHARS)
+    model_config = ConfigDict(extra="forbid")
+
+
+# Layer 3's confidence ceiling. Below layer 2's, which is below layer 1's, so a
+# timeline row always says how much work went into believing it.
+MAX_LAYER3_CONFIDENCE = 0.55
+
+EXTRACT_SYSTEM = (
+    "You classify one message from an incident channel into exactly one intent. "
+    "If it is chatter, acknowledgement, or anything that is not an action or an "
+    "observation about the incident, answer `noise`. Answering `noise` is "
+    "correct far more often than not."
+)
+
+
+def build_extract_escalation(router: Any) -> Callable[[str], Awaitable[Intent | None]]:
+    """The layer 3 seam, filled.
+
+    Returns None on any failure -- a provider error, a budget trip, an
+    unparseable reply. Layer 3 is an *optimisation*: a message it cannot
+    classify stays NOISE, the transcript is still stored, and the PIR still has
+    it to cite. Letting a model outage break ingestion would invert the whole
+    priority order this project is built on.
+    """
+
+    async def _escalate(text: str) -> Intent | None:
+        try:
+            completion = await router.complete(
+                role="extract",
+                system=EXTRACT_SYSTEM,
+                user=text[:2000],
+                schema=ExtractedIntent,
+                incident_id=0,
+            )
+        except Exception as exc:
+            log.debug("intent.layer3_unavailable", error=str(exc)[:200])
+            return None
+
+        extracted: ExtractedIntent = completion.parsed
+        if extracted.kind is IntentKind.NOISE:
+            return None
+        return Intent(
+            kind=extracted.kind,
+            confidence=MAX_LAYER3_CONFIDENCE,
+            summary=(extracted.summary or text.strip())[:SUMMARY_CHARS],
+        )
+
+    return _escalate

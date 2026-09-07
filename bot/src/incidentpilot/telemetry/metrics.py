@@ -202,6 +202,38 @@ HISTORY_CALLS = Counter(
 )
 
 
+# --- the PIR path (W6) -------------------------------------------------------
+# Attempts by outcome, so "we fell back to the secondary provider" is visible in
+# a graph rather than inferred from a latency bump. Deliberately NOT labelled by
+# model: the model is config, and a metric labelled by it would break every
+# dashboard the day E-1 is settled.
+LLM_CALLS = Counter(
+    "ip_llm_calls_total",
+    "Model calls, by role, provider and outcome.",
+    ["role", "provider", "outcome"],
+    registry=REGISTRY,
+)
+
+# The number that says whether the grounding gate is doing anything. Zero means
+# either perfect drafts or a validator that never runs, and those look identical
+# from the outside -- which is why the layer label is here.
+VALIDATION_FAILURES = Counter(
+    "ip_pir_validation_failures_total",
+    "Draft rejections by the deterministic citation validator, by layer and reason.",
+    ["layer", "reason"],
+    registry=REGISTRY,
+)
+
+# D6. Counted by class, never by value: a metric carrying the redacted values
+# would be a second copy of the data with none of the controls.
+PII_REDACTED = Counter(
+    "ip_pii_redacted_total",
+    "Values replaced with stable tokens before egress, by class.",
+    ["pii_class"],
+    registry=REGISTRY,
+)
+
+
 def set_degradation_level(level: int) -> None:
     """Single writer for the degradation gauge, so the value cannot drift."""
     DEGRADATION_LEVEL.set(level)

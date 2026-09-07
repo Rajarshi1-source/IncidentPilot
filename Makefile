@@ -95,6 +95,10 @@ gate-g4: ## G4 — 200 messages, 200 rows, zero conversations.history calls
 gate-g5: ## G5 — pager unreachable → cache → static rota → team channel, announced
 	@bash scripts/gate_g5.sh
 
+.PHONY: gate-g6
+gate-g6: ## G6 — provider blocked → skeleton in 90s; unblocked → zero uncited claims
+	@bash scripts/gate_g6.sh
+
 .PHONY: relay
 relay: ## Run the outbox relay (the only external writer)
 	$(UV) run python -m incidentpilot.orchestration.relay

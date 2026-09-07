@@ -17,9 +17,9 @@ Status column reflects what is actually instrumented today, not what is planned.
 | **Time-to-war-room** | alert accepted → channel created + responder invited + runbook pinned | **p95 < 10 s** | — | ✅ W3 |
 | **Responder notified** | alert accepted → page delivered, or the channel told nobody was reached | **p95 < 30 s** | — | ✅ W5 |
 | **Transcript completeness** | of the newest page Slack reports, the fraction we hold (sampled, see ADR 0003) | **≥ 99.99 %** | see below | ✅ W4 |
-| **PIR delivery** | resolve → draft posted, any layer including skeleton | **99.5 %, p95 < 90 s** | 3.6 h | ⏳ W6 |
-| **PIR grounding** | PIRs with zero uncited claims | **100 % — hard invariant** | **zero** | ⏳ W6 |
-| **Cost per incident** | LLM spend ÷ incidents | **< $0.50** | breaker at 2× | ⏳ W6 |
+| **PIR delivery** | resolve → draft posted, any layer including skeleton | **99.5 %, p95 < 90 s** | 3.6 h | ✅ W6 |
+| **PIR grounding** | PIRs with zero uncited claims | **100 % — hard invariant** | **zero** | ✅ W6 |
+| **Cost per incident** | LLM spend ÷ incidents | **< $0.50** | breaker at 2× | ✅ W6 |
 
 ## Two of these are unusual, and both are deliberate
 

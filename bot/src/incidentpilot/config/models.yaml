@@ -1,0 +1,89 @@
+# The ONLY place a model name appears (INV-07, W6-11).
+#
+# Everything above this file speaks in roles -- extract, synthesize, judge -- and
+# the router resolves a role to a provider and a model here. A CI grep fails the
+# build on any vendor or model string under bot/src/ outside config/.
+#
+# That is not vendor-neutrality theatre. A model name in code makes a price
+# change a code change and a deprecation a code change, and it would make the
+# week 7 experiment that settles E-1 a diff instead of a flag.
+#
+# Every value is `${VAR:-default}`, so a clean clone runs the whole demo on the
+# `fake` provider with no credentials (C-02) and a real deployment overrides
+# only what it needs.
+
+version: "2.1.0"
+
+providers:
+  fake:
+    kind: fake
+  local:
+    kind: local
+    base_url: ${LLM_LOCAL_BASE_URL:-http://localhost:11434/v1}
+  openai:
+    kind: openai
+    base_url: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    api_key_env: OPENAI_API_KEY
+  anthropic:
+    kind: anthropic
+    base_url: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com/v1}
+    api_key_env: ANTHROPIC_API_KEY
+
+roles:
+  # Cheap, structured, high-volume. Runs only on messages the regex and the
+  # embedding layers both declined (C-10), batched, with a hard 8s timeout --
+  # this sits on the transcript path and a slow extract must not become a
+  # dropped message.
+  extract:
+    provider: ${LLM_PROVIDER_EXTRACT:-fake}
+    model: ${LLM_MODEL_EXTRACT:-gpt-5.4-mini}
+    fallback_provider: ${LLM_FALLBACK_EXTRACT:-local}
+    fallback_model: ${LLM_FALLBACK_MODEL_EXTRACT:-llama-3.3-8b}
+    max_output_tokens: 512
+    temperature: 0.0
+    timeout_s: 8
+    budget_usd_per_incident: 0.05
+    input_usd_per_mtok: 0.25
+    output_usd_per_mtok: 2.00
+
+  # The flagship. E-1: the committed default stays GPT-5.4-mini for consistency
+  # with the other capstones, and Rev 2 flags that a current-generation small
+  # model now sits roughly 4x below it on price. That argument is NOT settled
+  # here -- week 7's harness settles it by replaying the golden corpus with
+  # `--set roles.synthesize.model=<candidate>` and comparing quality and cost on
+  # this project's own fixtures. Promoting a model on a price list is how you end
+  # up defending a number you did not measure.
+  synthesize:
+    provider: ${LLM_PROVIDER_SYNTH:-fake}
+    model: ${LLM_MODEL_SYNTH:-gpt-5.4-mini}
+    fallback_provider: ${LLM_FALLBACK_SYNTH:-anthropic}
+    fallback_model: ${LLM_FALLBACK_MODEL_SYNTH:-claude-sonnet-5}
+    max_output_tokens: 4096
+    temperature: 0.2
+    timeout_s: 60
+    budget_usd_per_incident: 0.40
+    input_usd_per_mtok: 0.25
+    output_usd_per_mtok: 2.00
+
+  # Scoring the eval corpus, never the production path. `offline_only` is
+  # enforced by the router, which refuses to resolve this role outside eval/:
+  # a judge on the hot path would put a second model between an incident and its
+  # postmortem, and the validator is deterministic precisely so that nothing has
+  # to.
+  judge:
+    provider: ${LLM_PROVIDER_JUDGE:-fake}
+    model: ${LLM_MODEL_JUDGE:-claude-opus-5}
+    max_output_tokens: 1024
+    temperature: 0.0
+    timeout_s: 30
+    offline_only: true
+    input_usd_per_mtok: 5.00
+    output_usd_per_mtok: 25.00
+
+# Layer 1 and 2 are providers; layer 3 is ours and needs no vendor at all.
+fallback_chain: [primary, secondary, deterministic_skeleton]
+
+budgets:
+  usd_per_incident: ${IP_LLM_BUDGET_USD_PER_INCIDENT:-0.50}
+  usd_per_day: ${IP_LLM_BUDGET_USD_PER_DAY:-5.0}
+  usd_per_month: ${IP_LLM_BUDGET_USD_PER_MONTH:-50.0}

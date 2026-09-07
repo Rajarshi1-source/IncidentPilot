@@ -402,3 +402,105 @@ class RunbookStepSignal(Base):
     detected_by: Mapped[str] = mapped_column(Text)
     observed_at: Mapped[datetime] = mapped_column(TZ, server_default=func.now())
     source_message_ts: Mapped[str | None] = mapped_column(Text)
+
+
+class DeployEvent(Base):
+    """CI deploy notifications, so ``deploy:{sha}`` resolves to something (W6-22).
+
+    ``UNIQUE (sha, service, environment)`` is the identity: CI retries a failed
+    notification step, and the same commit ships to staging and production. Two
+    rows would make one deploy citable under two ids, and half of those
+    citations would then look fabricated to the validator.
+    """
+
+    __tablename__ = "deploy_events"
+    __table_args__ = (
+        UniqueConstraint("sha", "service", "environment", name="uq_deploy_identity"),
+        Index("idx_deploy_lookup", "service", "deployed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sha: Mapped[str] = mapped_column(Text)
+    service: Mapped[str] = mapped_column(Text)
+    environment: Mapped[str] = mapped_column(Text, server_default="production")
+    repository: Mapped[str | None] = mapped_column(Text)
+    actor: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(Text)
+    deployed_at: Mapped[datetime] = mapped_column(TZ)
+    raw: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+    received_at: Mapped[datetime] = mapped_column(TZ, server_default=func.now())
+
+
+class PIRDocument(Base):
+    """One generated post-incident review (W6-06).
+
+    Every column that is not the document itself exists to make the document
+    auditable: which layer produced it, which prompt version and content hash,
+    what the validator said, and what a human changed afterwards.
+
+    ``citation_coverage`` must read 1.000 to publish (D1, INV-05). It is stored
+    rather than only asserted at generation time, so the claim is checkable
+    afterwards -- ``Q9`` reports on it, and a coverage figure that only ever
+    existed in a passing test is not evidence of anything.
+    """
+
+    __tablename__ = "pir_documents"
+    __table_args__ = (UniqueConstraint("incident_id", "revision", name="uq_pir_revision"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("incidents.id", ondelete="CASCADE")
+    )
+    revision: Mapped[int] = mapped_column(Integer, server_default="1")
+    generation_layer: Mapped[str] = mapped_column(Text)
+    body: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    rendered_markdown: Mapped[str | None] = mapped_column(Text)
+
+    provider: Mapped[str | None] = mapped_column(Text)
+    model: Mapped[str | None] = mapped_column(Text)
+    prompt_version: Mapped[str | None] = mapped_column(Text)
+    prompt_sha256: Mapped[str | None] = mapped_column(Text)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6))
+    generation_ms: Mapped[int | None] = mapped_column(Integer)
+
+    citation_coverage: Mapped[float | None] = mapped_column(Numeric(4, 3))
+    validation_passed: Mapped[bool] = mapped_column(Boolean)
+    validation_errors: Mapped[list[Any]] = mapped_column(JSONB, server_default="[]")
+    human_edit_ratio: Mapped[float | None] = mapped_column(Numeric(4, 3))
+    reviewed_by: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime | None] = mapped_column(TZ)
+    created_at: Mapped[datetime] = mapped_column(TZ, server_default=func.now())
+
+
+class ActionItemRow(Base):
+    """An action item, with the message that proposed it.
+
+    Named ``ActionItemRow`` rather than ``ActionItem`` because ``pir/schema.py``
+    already owns that name for the Pydantic model the LLM produces. Two classes
+    called ActionItem in one codebase -- one validated, one persisted -- is a
+    confusion worth one awkward suffix to avoid.
+    """
+
+    __tablename__ = "action_items"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("incidents.id", ondelete="CASCADE")
+    )
+    pir_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("pir_documents.id", ondelete="SET NULL")
+    )
+    description: Mapped[str] = mapped_column(Text)
+    citations: Mapped[list[Any]] = mapped_column(JSONB, server_default="[]")
+    owner: Mapped[str | None] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default="open")
+    external_ref: Mapped[str | None] = mapped_column(Text)
+    due_at: Mapped[datetime | None] = mapped_column(TZ)
+    completed_at: Mapped[datetime | None] = mapped_column(TZ)
+    reopened_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(TZ, server_default=func.now())

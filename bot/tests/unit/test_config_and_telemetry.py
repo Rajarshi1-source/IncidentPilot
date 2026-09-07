@@ -43,6 +43,9 @@ EXPECTED_METRICS = {
     "ip_outbox_dispatched_total",
     "ip_messages_stored_total",
     "ip_slack_history_calls_total",
+    "ip_llm_calls_total",
+    "ip_pir_validation_failures_total",
+    "ip_pii_redacted_total",
 }
 
 

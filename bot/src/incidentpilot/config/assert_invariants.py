@@ -87,6 +87,17 @@ def check(cfg: Settings) -> list[str]:
             "Slack app gets one conversations.history call per minute (INV-02)"
         )
 
+    # A deploy row is what makes a `deploy:{sha}` citation VALID. Without an
+    # allowlist, a leaked bearer lets anyone write one -- and the validator
+    # would then wave the resulting citation through, because as far as it can
+    # tell the evidence exists. This is the one endpoint where a forged row is
+    # worse than a forged request.
+    if cfg.deploy_bearer is not None and not cfg.deploy_repo_allowlist:
+        problems.append(
+            f"deploy_repo_allowlist is empty in environment {cfg.environment!r} -- "
+            "a leaked deploy bearer could write evidence a PIR would then cite"
+        )
+
     if cfg.signature_max_age_s > 300:
         problems.append(
             f"signature_max_age_s is {cfg.signature_max_age_s}s; the Slack replay window "

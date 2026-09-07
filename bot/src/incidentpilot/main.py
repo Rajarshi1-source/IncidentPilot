@@ -19,7 +19,7 @@ from redis.asyncio import Redis
 from incidentpilot import __version__
 from incidentpilot.api import health
 from incidentpilot.api.slash import commands as slash_commands
-from incidentpilot.api.webhooks import alertmanager, paging, slack
+from incidentpilot.api.webhooks import alertmanager, deploy, paging, slack
 from incidentpilot.config.assert_invariants import assert_invariants
 from incidentpilot.config.graph_loader import load_service_graph
 from incidentpilot.config.settings import Settings
@@ -236,6 +236,7 @@ def create_app(
     app.include_router(paging.router)
     app.include_router(slack.router)
     app.include_router(slash_commands.router)
+    app.include_router(deploy.router)
 
     return app
 

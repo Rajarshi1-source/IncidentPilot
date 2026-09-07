@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     oncall_cache_ttl_s: int = 60
     oncall_schedule_default: str = "default"
 
+    # --- PIR and impact (W6) ---------------------------------------------
+    # Repositories permitted to write deploy rows. Empty means "any", which
+    # is fine in dev and checked by assert_invariants in production: a
+    # fabricated deploy row makes a *valid* citation, so this allowlist is
+    # doing more work than it looks.
+    deploy_repo_allowlist: tuple[str, ...] = ()
+    prometheus_url: str = "http://localhost:9090"
+    pir_support_threshold: float = 0.35
+
     # --- runbooks (D4) ---------------------------------------------------
     runbooks_dir: str = "runbooks"
 
