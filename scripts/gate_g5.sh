@@ -21,6 +21,26 @@ EXPECTED_RUNBOOKS=8
 fail() { printf '\n\033[31mGATE G5: FAIL\033[0m - %s\n\n' "$1" >&2; exit 1; }
 ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; }
 
+# --- the integration suite needs the outbox to itself ------------------------
+#
+# The compose stack runs a live relay that polls `outbox_events` every second.
+# These tests enqueue rows and assert on what a relay they construct does with
+# them -- so a second relay running against the same database dispatches rows
+# out from under the assertions, and the gate fails about one run in three for a
+# reason that has nothing to do with the code under test.
+#
+# Found by running this gate five times in a row. A gate that is right two
+# thirds of the time is worse than no gate: it teaches people to re-run.
+#
+# CI never hits this (the workflow starts only postgres and valkey), which is
+# exactly why it survived seven weeks of green builds.
+if docker compose ps --services --filter status=running 2>/dev/null | grep -qx relay; then
+  echo "  pausing the compose relay for the duration of this gate"
+  docker compose stop relay worker scheduler >/dev/null 2>&1 || true
+  STOPPED_BACKGROUND_WRITERS=1
+  trap 'if [[ "${STOPPED_BACKGROUND_WRITERS:-0}" == "1" ]]; then           docker compose start relay worker scheduler >/dev/null 2>&1 || true; fi' EXIT
+fi
+
 printf '\nG5 - responders, fatigue routing, runbooks\n'
 printf 'database %s\n\n' "${DB_URL%%\?*}"
 

@@ -1,0 +1,322 @@
+{
+  "uid": "incidentpilot-ops",
+  "title": "IncidentPilot - operations",
+  "tags": [
+    "incidentpilot"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "description": "What the product is doing. Read top to bottom during an incident: is ingest healthy, did the war room open fast enough, and is the storm being compressed.",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Alerts accepted / sec",
+      "type": "timeseries",
+      "description": "Ingest throughput. A cliff here with no matching drop in Alertmanager is a trust-boundary rejection rather than a quiet period -- check ip_webhook_rejected_total by reason.",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(ip_alerts_accepted_total[5m]))",
+          "legendFormat": "accepted",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Webhook p99 (SLO < 250ms)",
+      "type": "timeseries",
+      "description": "The 202 contract is 'durably accepted', nothing more. Anything slow here is queue or stream latency, because nothing slow is supposed to happen before the response.",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(ip_webhook_seconds_bucket[5m])))",
+          "legendFormat": "p99",
+          "refId": "A"
+        },
+        {
+          "expr": "0.25",
+          "legendFormat": "SLO",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Alerts absorbed per incident (D3)",
+      "type": "timeseries",
+      "description": "Storm compression. A healthy storm shows a long right tail here and a FLAT incident count -- the two together are the differentiator.",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ip_alerts_per_incident_bucket[30m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ip_alerts_per_incident_bucket[30m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Time to war room (SLO p95 < 10s)",
+      "type": "timeseries",
+      "description": "Alert accepted to channel created, responder invited and runbook pinned. The number a responder actually feels.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ip_time_to_war_room_seconds_bucket[30m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        },
+        {
+          "expr": "10",
+          "legendFormat": "SLO",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "State transitions",
+      "type": "timeseries",
+      "description": "Thirteen states. A rise in reopened is a premature-resolve problem; a rise in abandoned is a routing problem.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (to_state) (rate(ip_transitions_total[10m]))",
+          "legendFormat": "{{to_state}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Stream backlog (the HPA signal)",
+      "type": "timeseries",
+      "description": "The worker HPA scales on this rather than CPU: a worker blocked on a slow external call uses no CPU at all, so a CPU-based autoscaler scales down exactly when the backlog is growing.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (stream) (ip_stream_pending)",
+          "legendFormat": "{{stream}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Slack 429s by priority lane",
+      "type": "timeseries",
+      "description": "Shedding drops priority 2-3 (timers, reactions) and never 0-1 (channel creation, paging). Traffic in lane 0 here means the shedding policy is wrong.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (priority) (rate(ip_slack_rate_limited_total[10m]))",
+          "legendFormat": "priority {{priority}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Degradation level",
+      "type": "stat",
+      "description": "0 normal, 1 degraded (no model), 2 brownout (no database, alerts buffering), 3 lifeboat. Every change is announced in-channel -- silent degradation is worse than failure.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "ip_degradation_level",
+          "legendFormat": "level",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Brownout buffered / hour",
+      "type": "stat",
+      "description": "Alerts written to alerts.wal because the primary stream refused. A dropped alert is unrecoverable; a delayed one is not.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(ip_brownout_buffered_total[1h]))",
+          "legendFormat": "buffered",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Outbox dead-letter",
+      "type": "timeseries",
+      "description": "Rows that exhausted eight attempts. A DLQ nobody looks at is the same as dropping, which is why it is on the dashboard rather than only in a table.",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (action) (increase(ip_outbox_dead_total[6h]))",
+          "legendFormat": "{{action}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

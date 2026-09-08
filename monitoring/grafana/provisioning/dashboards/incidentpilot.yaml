@@ -1,0 +1,21 @@
+# Dashboards provisioned from files, not clicked together in the UI.
+#
+# A dashboard that exists only inside someone's Grafana is a dashboard that
+# vanishes when the pod is replaced, and one nobody can review in a pull
+# request. These are checked in, and `allowUiUpdates: false` keeps them that
+# way -- an edit made in the browser would be silently reverted on the next
+# reload, which is confusing exactly once and then teaches the right habit.
+apiVersion: 1
+providers:
+  - name: incidentpilot
+    orgId: 1
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      # NOT under /etc/grafana/provisioning: that whole tree is bind-mounted
+      # read-only, and nesting a second mount inside it fails at container
+      # init with 'read-only file system'.
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

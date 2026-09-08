@@ -27,6 +27,7 @@ def build_engine(
     pool_size: int = 5,
     max_overflow: int = 5,
     statement_timeout_ms: int | None = None,
+    idle_in_transaction_ms: int | None = None,
 ) -> AsyncEngine:
     """Create an engine with UTC pinned on every connection.
 
@@ -37,6 +38,36 @@ def build_engine(
     options = ["-c timezone=UTC"]
     if statement_timeout_ms is not None:
         options.append(f"-c statement_timeout={statement_timeout_ms}")
+
+    # A session that opens a transaction and then stops is the worst thing that
+    # can happen to this schema.
+    #
+    # The relay claims outbox rows with `UPDATE ... SET status = 'claimed'`
+    # inside a transaction. Kill that process hard -- SIGKILL, an OOM, a node
+    # eviction -- and PostgreSQL keeps the transaction open until the TCP
+    # connection is reaped, which can be many minutes. For that whole window the
+    # claimed rows are locked, `reclaim_stuck` cannot reclaim them (its own
+    # UPDATE queues behind the dead one), and anything that needs a table lock
+    # on `incidents` blocks too. The system does not error; it simply stops.
+    #
+    # Observed while running the gates: a killed test run left one `idle in
+    # transaction` session and every later run hung until the connection was
+    # terminated by hand.
+    #
+    # Sixty seconds is comfortably longer than any legitimate transaction here
+    # -- the relay's longest is one external call -- and far shorter than the
+    # default TCP keepalive, which is what would otherwise decide.
+    #
+    # Not applied in dev or test. The crash matrix *deliberately* holds
+    # transactions open across a simulated crash and then resumes them, so a
+    # timeout there kills the thing under test -- nine of fifteen crash points
+    # failed when this was set to five seconds. Production has no such case:
+    # the longest legitimate transaction is one external call.
+    idle_ms = idle_in_transaction_ms
+    if idle_ms is None and not settings.is_dev:
+        idle_ms = 60_000
+    if idle_ms is not None:
+        options.append(f"-c idle_in_transaction_session_timeout={idle_ms}")
 
     return create_async_engine(
         settings.database_url.get_secret_value(),

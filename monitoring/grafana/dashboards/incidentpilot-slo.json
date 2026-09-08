@@ -1,0 +1,298 @@
+{
+  "uid": "incidentpilot-slo",
+  "title": "IncidentPilot - SLOs and the AI feature",
+  "tags": [
+    "incidentpilot",
+    "slo"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "description": "The platform's own SLIs, and the governance panels for the AI feature. Most people build an SRE tool and never define its SLIs; this is the dashboard that says otherwise.",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Citation coverage (must read 1.0)",
+      "type": "stat",
+      "description": "A FLAT LINE AT 1.0 IS THE POINT. Grounding has a zero error budget because it is an invariant enforced by a deterministic validator, not a probabilistic target. NaN before the first PIR is deliberate: a gauge reading 0 on a fresh pod is indistinguishable from a real violation, and would page on every deploy.",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "ip_pir_citation_coverage",
+          "legendFormat": "coverage",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Ingest error-budget burn rate",
+      "type": "timeseries",
+      "description": "Multi-window burn rate against a 99.9% objective. Two windows always: the long one says the problem is real, the short one says it is still happening.",
+      "gridPos": {
+        "h": 6,
+        "w": 16,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "ip:ingest_error_ratio:rate1h / 0.001",
+          "legendFormat": "1h burn",
+          "refId": "A"
+        },
+        {
+          "expr": "14.4",
+          "legendFormat": "page threshold",
+          "refId": "B"
+        },
+        {
+          "expr": "6",
+          "legendFormat": "ticket threshold",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "PIR generation by layer",
+      "type": "timeseries",
+      "description": "llm_primary, llm_secondary, skeleton. A run of skeletons means delivery is meeting its SLO while the feature is effectively absent, which is why EverythingIsASkeleton is its own alert.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (layer) (rate(ip_pir_seconds_count[30m]))",
+          "legendFormat": "{{layer}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Validation rejections by reason",
+      "type": "timeseries",
+      "description": "Check the reason before blaming the model. A spike in 'unsupported' is usually the support threshold being too strict after a change, and a false rejection pushes honest drafts to the skeleton.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(ip_pir_validation_failures_total[1h]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Cost per PIR (budget $0.50)",
+      "type": "timeseries",
+      "description": "Settle a model change with the eval harness rather than a price list: replay the 40-incident corpus with --set roles.synthesize.model=<candidate>.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(ip_llm_cost_usd_total[24h])) / clamp_min(sum(increase(ip_pir_seconds_count{outcome=\"ok\"}[24h])), 1)",
+          "legendFormat": "cost per PIR",
+          "refId": "A"
+        },
+        {
+          "expr": "0.5",
+          "legendFormat": "budget",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Budget breaker trips",
+      "type": "timeseries",
+      "description": "Per incident, per day, per month. A trip degrades to the skeleton and never blocks: a cost control that can make an outage worse is a bug.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (scope) (increase(ip_budget_trips_total[6h]))",
+          "legendFormat": "{{scope}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Transcript completeness (SLO 99.99%)",
+      "type": "timeseries",
+      "description": "THE REAL AVAILABILITY METRIC. The bot can be 100% up and still have silently dropped three messages, after which the PIR is wrong and nobody notices. Sampled rather than counted (ADR 0003).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "ip_transcript_completeness",
+          "legendFormat": "ratio",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0.99,
+          "max": 1
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "conversations.history callers (reconciler only)",
+      "type": "timeseries",
+      "description": "INV-02 as a time series. Slack allows one call per minute workspace-wide, so a hot-path caller starves the reconciler and silently shortens every transcript.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum by (caller) (increase(ip_slack_history_calls_total[1h]))",
+          "legendFormat": "{{caller}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Human edit ratio by prompt version",
+      "type": "timeseries",
+      "description": "How much a human had to rewrite. Almost nobody measures this, which is exactly why it is here: it is the only panel that can make the AI feature look bad.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, prompt_version) (rate(ip_pir_human_edit_ratio_bucket[7d])))",
+          "legendFormat": "{{prompt_version}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@ Residual risk forces the admission of what is *still* broken after the
 mitigation, which is both better engineering and a far better answer to "what
 would take this down?" than a claim that nothing would.
 
-Eighteen rows. Where a row's mitigation is a specific test, gate or file, it is
+Twenty rows (eighteen from week 7, two added in week 8). Where a row's mitigation is a specific test, gate or file, it is
 named — a mitigation with no artifact behind it is an intention.
 
 Scored on the usual triple: **S**everity, **L**ikelihood and **D**etectability,
@@ -41,6 +41,22 @@ arguing about.
 | 18 | **IncidentPilot itself is down** | The tool needed most when things are broken is the thing that is broken | `IncidentPilotDown` with `route: fallback`; the lifeboat CronJob probes `/readyz` every minute | The alert bypasses IncidentPilot entirely (INV-11, `test_alertmanager_config.py`); the lifeboat posts the last known on-call from a separate image sharing no code (`test_lifeboat_imports_nothing`) | **The lifeboat depends on three things it cannot verify:** the fallback webhook still being valid, `/state/oncall.json` having been written while the bot was healthy, and the cluster still scheduling CronJobs. A control-plane failure takes the lifeboat with it, and nothing below it catches that | 5 | 1 | 2 | **10** |
 
 ---
+
+## Two rows week 8 added, and why they were not there before
+
+Both were found by the first gate that starts from **empty volumes**. Every
+earlier gate ran against a database some previous test had populated, which is
+why neither was visible for seven weeks.
+
+| # | Failure | Effect | Detection | Mitigation | Residual risk | S | L | D | RPN |
+|---|---|---|---|---|---|---|---|---|---|
+| 19 | **Reference data never seeded on a fresh deployment** | `services.graph_depth` is empty, correlation's topology term scores zero for every alert, and a 40-alert cascade becomes 36 incidents. D3 absent, every pod healthy | G8 asserts ≥10 services before running the demo; the smoke test asserts *exactly one* incident rather than "at least one" | `config/sync_reference.py` runs after `alembic upgrade head`, in the same one-shot service and the same Kubernetes Job | **Nothing detects a graph that is present but wrong.** An edge deleted from `service-graph.yaml` by mistake re-syncs cleanly and quietly weakens correlation; only the eval corpus's storm fixtures would notice, and only if someone runs them | 4 | 2 | 5 | **40** |
+| 20 | **A component is built, tested and never called** | The flagship PIR pipeline existed for two weeks without the product ever invoking it. `ensure_engaged` likewise: incidents sat in `detected` and no war room ever opened | Only an end-to-end run through the public HTTP surface. Unit and gate tests both construct the component themselves | `scripts/demo.sh` drives everything through the real webhooks, and `smoke.sh` asserts the *outcome* (a channel exists, a PIR row was written) rather than that a function returned | **This is a class, not an instance.** Six occurrences so far, and the only detector is an end-to-end path that exercises the wiring. Any component added without a demo step that reaches it is invisible to this mitigation in exactly the same way | 5 | 3 | 5 | **75** |
+
+Row 20 ties with row 1 at the top, and it deserves to. Both are failures with no
+error: the system reports success and simply does less than it claims. The
+mitigation for both is the same in shape — assert on a *consequence* observed
+from outside, never on a call having been made.
 
 ## What the ordering says
 

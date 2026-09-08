@@ -1,0 +1,195 @@
+# Release (W8-13, §14.2).
+#
+# Tag `v0.8.0` and this builds three multi-arch images, attaches an SBOM and
+# provenance to each, signs them keylessly, deploys atomically, smoke-tests the
+# result and rolls back if the smoke test fails.
+#
+# The two properties worth defending in a review:
+#
+#   - **Nothing is signed by a key this repository holds.** cosign keyless uses
+#     the workflow's OIDC identity, so the signature says "built by this
+#     workflow, from this commit" rather than "built by whoever has the key".
+#     A signing key in a secret is a key that leaks with the secret.
+#   - **`--atomic` plus a smoke test plus rollback, in that order.** `--atomic`
+#     alone only guarantees the *release* succeeded, which is a statement about
+#     Helm rather than about the product. The smoke test is what decides.
+
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version to build, e.g. 0.8.0"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+  # Required for cosign keyless. Without it the signing step fails at the very
+  # end, after the images are already pushed — so it is declared here rather
+  # than discovered then.
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  UV_VERSION: "0.12.10"
+
+jobs:
+  # The gates run again on the tag. A release built from a commit whose CI was
+  # green last week is a release built from a commit whose dependencies have
+  # moved since.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv python install 3.14.7
+      - run: uv sync --frozen --extra dev
+        working-directory: bot
+      - name: Unit tests
+        run: uv run pytest tests/unit -q
+        working-directory: bot
+      - name: The eval gate
+        run: uv run python -m eval.run --corpus eval/corpus --gate
+        working-directory: bot
+      - name: Helm chart renders, and produces no Secret
+        run: |
+          helm lint charts/incidentpilot
+          helm template ip charts/incidentpilot > /tmp/rendered.yaml
+          if grep -q "^kind: Secret" /tmp/rendered.yaml; then
+            echo "::error::the chart rendered a Secret object; secrets are references, never contents"
+            exit 1
+          fi
+          echo "no Secret objects in the rendered chart"
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: bot
+            context: ./bot
+            image: incidentpilot
+          - name: dashboard
+            context: ./dashboard
+            image: incidentpilot-dashboard
+          - name: lifeboat
+            context: ./lifeboat
+            image: incidentpilot-lifeboat
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          # arm64 as well as amd64: the demo VM is x86 and half the laptops that
+          # will ever run this are Apple silicon. An image that only runs on one
+          # of them is an image somebody cannot try.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # SBOM and provenance attached at build time, not generated afterwards
+          # from a scan. A scan tells you what a tool could find; an SBOM from
+          # the builder tells you what actually went in.
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.6.1"
+
+      - name: Sign the image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Verify our own signature
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+        # Signing and never verifying is how a broken signing step goes
+        # unnoticed for a year. This asserts the signature we just made is
+        # actually checkable, with the identity we expect.
+        run: |
+          cosign verify "${IMAGE}@${DIGEST}" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # A real deployment needs a cluster this workflow can reach. Gated on the
+    # environment so a fork that tags a release does not try to deploy anywhere.
+    environment: production
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Deploy atomically
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          helm upgrade --install incidentpilot charts/incidentpilot \
+            --namespace incidentpilot --create-namespace \
+            --set image.tag="${VERSION#v}" \
+            --set dashboard.tag="${VERSION#v}" \
+            --atomic --timeout 5m --wait
+
+      - name: Smoke test the deployment
+        id: smoke
+        run: |
+          kubectl -n incidentpilot port-forward svc/incidentpilot-incidentpilot-api 18000:8000 &
+          sleep 8
+          IP_API_URL=http://localhost:18000 bash scripts/smoke.sh --expect-channel --timeout 90
+
+      - name: Roll back
+        # `--atomic` already reverts a failed *release*, which is a statement
+        # about Helm. This reverts a release that succeeded and then failed its
+        # smoke test, which is a statement about the product.
+        if: failure() && steps.smoke.outcome == 'failure'
+        run: |
+          echo "::error::smoke test failed after a successful rollout; rolling back"
+          helm rollback incidentpilot --namespace incidentpilot --wait --timeout 5m

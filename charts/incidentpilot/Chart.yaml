@@ -1,0 +1,9 @@
+apiVersion: v2
+name: incidentpilot
+description: Self-hosted incident response with citation-anchored post-incident reviews
+type: application
+version: 0.8.0
+appVersion: "0.8.0"
+kubeVersion: ">=1.29.0-0"
+maintainers:
+  - name: Rajarshi Basu

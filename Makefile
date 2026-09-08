@@ -79,6 +79,8 @@ up: ## Start the stack (works with no .env and no API key)
 	docker compose up -d --build
 	@echo "  api        http://localhost:$(or $(IP_PORT_API),18000)/healthz"
 	@echo "  metrics    http://localhost:$(or $(IP_PORT_API),18000)/metrics"
+	@echo "  dashboard  http://localhost:$(or $(IP_PORT_DASHBOARD),13000)"
+	@echo "  grafana    http://localhost:$(or $(IP_PORT_GRAFANA),13001)"
 	@echo "  prometheus http://localhost:$(or $(IP_PORT_PROMETHEUS),19090)"
 	@echo "  postgres   localhost:$(or $(IP_PORT_POSTGRES),55432)"
 	@echo "  valkey     localhost:$(or $(IP_PORT_VALKEY),56379)"
@@ -120,6 +122,29 @@ gate-g5: ## G5 — pager unreachable → cache → static rota → team channel,
 .PHONY: gate-g6
 gate-g6: ## G6 — provider blocked → skeleton in 90s; unblocked → zero uncited claims
 	@bash scripts/gate_g6.sh
+
+.PHONY: gate-g8
+gate-g8: ## G8 — clean clone, no .env, full demo three times consecutively
+	@bash scripts/gate_g8.sh
+
+.PHONY: seed
+seed: ## Seed the synthetic demo dataset (every row titled '[demo] ...')
+	$(UV) run python ../scripts/seed.py --reset
+
+.PHONY: dashboard
+dashboard: ## Typecheck, lint and build the dashboard
+	cd dashboard && npm ci && npm run verify && npm run build
+
+.PHONY: load
+load: ## k6 ingest load gate — 500 alerts in 60s, p99 < 250ms, zero drops
+	k6 run bot/tests/load/ingest.js
+
+.PHONY: chart
+chart: ## Lint the Helm chart and assert it renders no Secret objects
+	helm lint charts/incidentpilot
+	@helm template ip charts/incidentpilot > /tmp/ip-chart.yaml
+	@if grep -q "^kind: Secret" /tmp/ip-chart.yaml; then 	  echo "::error::the chart rendered a Secret; secrets are references, never contents"; exit 1; 	fi
+	@echo "  chart renders $$(grep -c '^kind:' /tmp/ip-chart.yaml) objects, 0 Secrets"
 
 .PHONY: gate-g7
 gate-g7: ## G7 — replay under 30s with zero network; a prompt edit turns the gate red

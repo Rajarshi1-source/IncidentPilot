@@ -1,0 +1,14 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Must match the scrape interval in prometheus.yml. If they disagree,
+      # every rate() query silently uses a window that does not line up with the
+      # data -- the graph still renders, it is just wrong. E-2 settled the
+      # scrape at 15s and this is the other half of that decision.
+      timeInterval: 15s

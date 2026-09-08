@@ -1,0 +1,222 @@
+{{/*
+Services, the HPA, the PDB, the NetworkPolicy, the ServiceMonitor and the
+lifeboat CronJob.
+
+Grouped in one file because they are all consequences of the Deployments next
+door rather than independent objects, and splitting them across six files makes
+`helm template` output harder to read than the thing it describes.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-api
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: api
+  ports: [{port: 8000, targetPort: http, name: http}]
+{{- if .Values.dashboard.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-dashboard
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: dashboard
+  ports: [{port: 3000, targetPort: http, name: http}]
+{{- end }}
+{{- if .Values.worker.hpa.enabled }}
+---
+{{/*
+Scaled on stream lag, NOT on CPU.
+
+`ip_stream_pending` is the depth of the Pending Entries List, which is what
+actually reflects backlog. A worker blocked on a slow external call uses no CPU
+at all, so a CPU-based HPA scales *down* at exactly the moment the queue is
+growing — the failure is silent and looks like the autoscaler working.
+
+This needs prometheus-adapter to expose the metric; the chart declares the
+intent and the cluster provides it.
+*/}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-worker
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "incidentpilot.fullname" . }}-worker
+  minReplicas: {{ .Values.worker.hpa.minReplicas }}
+  maxReplicas: {{ .Values.worker.hpa.maxReplicas }}
+  metrics:
+    - type: Pods
+      pods:
+        metric: {name: ip_stream_pending}
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.worker.hpa.targetPendingPerReplica | quote }}
+  behavior:
+    scaleUp:
+      # A storm is exactly when scaling must be fast. Sixty seconds of
+      # stabilisation on the way up is sixty seconds of backlog.
+      stabilizationWindowSeconds: 30
+    scaleDown:
+      # Slow on the way down: an alert storm arrives in bursts, and scaling in
+      # between them means paying the cold-start cost on every burst.
+      stabilizationWindowSeconds: 300
+{{- end }}
+{{- if .Values.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-api
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: api
+---
+{{/*
+A PDB on ingest matters more than on anything else here: a node drain that took
+every API pod at once would drop alerts, and a dropped alert is unrecoverable
+while a delayed one is not. Deliberately NOT applied to the relay, which runs a
+single replica by design -- a PDB with minAvailable 1 on a one-replica
+deployment blocks every node drain forever.
+*/}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-worker
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+{{/*
+Default deny, then allow what is needed.
+
+The ingest path's trust model is bearer token PLUS network position (B-02:
+Alertmanager does not sign its payloads, so there is no HMAC to fall back on).
+That second half is this object. Without it the bearer is the only thing between
+a stranger and a forged incident.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-default-deny
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-api-ingress
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: api
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: monitoring}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports: [{port: 8000, protocol: TCP}]
+{{- end }}
+{{- if .Values.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.lifeboat.enabled }}
+---
+{{/*
+The dead-man's switch (D7 L3).
+
+A SEPARATE image that shares no code with the bot. If it were built from the bot
+image it would fail for the same reason the bot failed, and it would be a second
+copy of the bug rather than insurance against it. `test_lifeboat_imports_nothing`
+walks its AST and asserts every import is stdlib.
+
+It probes readiness every minute and fires once, on the SECOND consecutive
+failure. Not the first: a single failed probe during a rolling restart is normal
+and paging on it teaches people to ignore the one alarm that still works when
+everything else is down.
+*/}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-lifeboat
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lifeboat
+spec:
+  schedule: {{ .Values.lifeboat.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # One attempt. A retrying lifeboat during a total outage is a retry storm
+      # aimed at the one webhook still answering.
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          securityContext: {{- include "incidentpilot.podSecurity" . | nindent 12 }}
+          containers:
+            - name: lifeboat
+              image: "{{ .Values.lifeboat.repository }}:{{ .Values.lifeboat.tag }}"
+              securityContext: {{- include "incidentpilot.containerSecurity" . | nindent 16 }}
+              env:
+                - name: PROBE_URL
+                  value: http://{{ include "incidentpilot.fullname" . }}-api:8000/readyz
+                - name: FALLBACK_WEBHOOK
+                  valueFrom:
+                    secretKeyRef: {name: {{ .Values.existingSecrets.lifeboat }}, key: url}
+                - name: LAST_ONCALL_PATH
+                  value: /state/oncall.json
+                - name: FAIL_COUNT_PATH
+                  value: /state/lifeboat.fails
+              volumeMounts: [{name: state, mountPath: /state}]
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {memory: 64Mi}
+          volumes:
+            # The counter must survive between the once-a-minute runs, which is
+            # the whole reason "fire on the second failure" is expressible.
+            - name: state
+              emptyDir: {}
+{{- end }}

@@ -21,6 +21,23 @@ Status column reflects what is actually instrumented today, not what is planned.
 | **PIR grounding** | PIRs with zero uncited claims | **100 % — hard invariant** | **zero** | ✅ W6 |
 | **Cost per incident** | LLM spend ÷ incidents | **< $0.50** | breaker at 2× | ✅ W6 |
 
+### The status column is about instrumentation, not about wiring
+
+Week 8 found a distinction this table was quietly blurring. Every SLI above was
+*measured* from the week its column says — the metric existed, the gate asserted
+on it, and the number was right. But two of the code paths that emit them were
+never invoked by the running product: `PIRGenerator` was never instantiated
+anywhere under `src/`, and `ensure_engaged` was never called, so no war room
+opened and no PIR was written outside a test.
+
+A metric can be correct and still describe nothing. "PIR delivery ✅ W6" was true
+of the component and false of the product for two weeks, and the only thing that
+could have caught it is an end-to-end run through the public HTTP surface —
+which is what `scripts/demo.sh` and G8 now are.
+
+The honest reading of this table is therefore: **the SLI is instrumented, and
+G8 proves something reaches it.**
+
 ## Two of these are unusual, and both are deliberate
 
 ### Transcript completeness is the real availability metric

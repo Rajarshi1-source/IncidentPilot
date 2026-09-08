@@ -1,0 +1,70 @@
+# PostgreSQL + TimescaleDB for a SINGLE-NODE DEMO.
+#
+# One replica, one PVC, no replication, no backup, no point-in-time recovery.
+# That is stated here rather than implied, because a StatefulSet in a repository
+# looks like a production database until somebody loses one.
+#
+# For anything real: a managed PostgreSQL with the TimescaleDB extension. The
+# application's entire coupling to it is one connection string.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels: {app: postgres}
+spec:
+  clusterIP: None
+  selector: {app: postgres}
+  ports: [{port: 5432, name: postgres}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: {app: postgres}
+  template:
+    metadata:
+      labels: {app: postgres}
+    spec:
+      containers:
+        - name: postgres
+          # The HA image, pinned. It carries TimescaleDB, pgvector and pg_trgm,
+          # which migration 0001 requires. Note the tag pairs a PostgreSQL patch
+          # with a Timescale version and the two do not move together -- ADR
+          # 0002 records the release where an invented combination did not
+          # exist and nothing in the suite caught it.
+          image: timescale/timescaledb-ha:pg18.4-ts2.29.2
+          env:
+            - name: POSTGRES_DB
+              value: incidentpilot
+            - name: POSTGRES_USER
+              value: ip
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: incidentpilot-postgres, key: password}
+            - name: PGDATA
+              value: /home/postgres/pgdata/data
+          ports: [{containerPort: 5432, name: postgres}]
+          readinessProbe:
+            exec: {command: ["pg_isready", "-U", "ip", "-d", "incidentpilot"]}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - {name: pgdata, mountPath: /home/postgres/pgdata}
+          resources:
+            requests: {cpu: 250m, memory: 1Gi}
+            limits: {memory: 2Gi}
+  volumeClaimTemplates:
+    - metadata: {name: pgdata}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # signal_samples is the largest table by an order of magnitude, and
+            # compression plus retention keep it bounded -- see
+            # docs/SCALING_DECISION.md, including the arithmetic that was wrong
+            # twice before this number.
+            storage: 20Gi

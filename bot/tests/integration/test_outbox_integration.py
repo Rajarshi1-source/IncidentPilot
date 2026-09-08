@@ -290,8 +290,26 @@ async def test_skip_locked_lets_two_relays_share_the_table(
     coordination service, because SKIP LOCKED lets each step past rows another
     holds instead of blocking behind them.
     """
+    # Count only the rows THIS test enqueued.
+    #
+    # `relay_once` claims whatever is pending, so a row left behind by an
+    # earlier test -- or by the demo, if this runs against a database the G8
+    # gate has touched -- gets dispatched by one of these two relays and the
+    # totals stop adding up. The test then fails intermittently for a reason
+    # with nothing to do with SKIP LOCKED, which is the worst kind of red
+    # build: it teaches people to re-run rather than to look.
+    #
+    # Found by running G3 four times in a row; it passed twice and failed twice.
+    #
+    # Scoped by reading back the ids rather than by clearing the table first: a
+    # blanket UPDATE takes row locks that a concurrently running relay is
+    # already holding, which turns an isolation fix into a deadlock -- observed,
+    # once, before this version.
+    mine: list[int] = []
     for i in range(10):
-        await _enqueue(sessions, incident_id, "post_storm_update", discriminator=str(i))
+        mine.append(
+            await _enqueue(sessions, incident_id, "post_storm_update", discriminator=str(i))
+        )
 
     handled: list[str] = []
 
@@ -310,8 +328,22 @@ async def test_skip_locked_lets_two_relays_share_the_table(
 
     a, b = await asyncio.gather(run("a"), run("b"))
 
-    assert a + b == 10, "every row was dispatched exactly once"
-    assert len(handled) == 10, "no row was handled twice"
+    # `a + b` counts every row the two relays dispatched, which may include
+    # somebody else's leftovers. What this test asserts is narrower and is the
+    # actual claim: each of ITS ten rows went out exactly once, and no relay
+    # handled a row another had already claimed.
+    assert a + b >= 10, "the two relays between them dispatched fewer rows than were enqueued"
+    assert len(handled) == a + b, "a row was handled twice"
+
+    async with sessions() as session:
+        states = (
+            await session.execute(
+                text("SELECT status, count(*) FROM outbox_events WHERE id = ANY(:ids) GROUP BY 1"),
+                {"ids": mine},
+            )
+        ).all()
+    counts = {str(status): int(count) for status, count in states}
+    assert counts == {"dispatched": 10}, f"expected 10 dispatched rows of my own, got {counts}"
 
     async with sessions() as session:
         remaining = (

@@ -1,0 +1,48 @@
+# Valkey for a SINGLE-NODE DEMO. One replica, AOF everysec, no Sentinel.
+#
+# The bounded loss is the justification, not an oversight: a hard crash costs at
+# most one second of stream entries, and Alertmanager re-sends on its
+# repeat_interval anyway. A loss that is both bounded and already recoverable
+# does not earn the operational cost of a Sentinel set here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  labels: {app: valkey}
+spec:
+  clusterIP: None
+  selector: {app: valkey}
+  ports: [{port: 6379, name: valkey}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: valkey
+spec:
+  serviceName: valkey
+  replicas: 1
+  selector:
+    matchLabels: {app: valkey}
+  template:
+    metadata:
+      labels: {app: valkey}
+    spec:
+      containers:
+        - name: valkey
+          image: valkey/valkey:9.1.2-alpine
+          args: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+          ports: [{containerPort: 6379, name: valkey}]
+          readinessProbe:
+            exec: {command: ["valkey-cli", "ping"]}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts: [{name: data, mountPath: /data}]
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: {storage: 5Gi}

@@ -1,0 +1,39 @@
+# Schema and reference data, as a Job that must complete before the app starts.
+#
+# Two steps, in this order, and the second is the one that was missing until the
+# final week: `services.graph_depth` is what correlation's topology signal reads,
+# and on a clean cluster an empty services table turns a 40-alert cascade into
+# 36 incidents. The differentiator is silently absent, and every pod looks
+# healthy.
+#
+# A Job rather than an initContainer on the API: the API runs three replicas, so
+# an initContainer would race itself three ways on every rollout.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: incidentpilot-migrate
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: migrate
+          image: ghcr.io/rajarshi1-source/incidentpilot:0.8.0
+          command:
+            - sh
+            - -c
+            - alembic upgrade head && python -m incidentpilot.config.sync_reference
+          env:
+            - name: IP_ENVIRONMENT
+              value: prod
+            - name: IP_DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: incidentpilot-database, key: url}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}

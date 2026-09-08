@@ -1,0 +1,216 @@
+{{/*
+Three deployments plus the dashboard, and the split is the bulkhead at the
+process level.
+
+Ingest is latency-bound with a 250 ms p99 to hold. Orchestration is CPU-bound on
+correlation and intent classification. The relay is the only process permitted
+to perform an external write (INV-03). Putting any two of them in one pod means
+a forty-alert storm competes with the webhook still trying to return 202, and a
+model call that takes sixty seconds delays a page.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-api
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels: {{- include "incidentpilot.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "8000"
+    spec:
+      securityContext: {{- include "incidentpilot.podSecurity" . | nindent 8 }}
+      # Give in-flight webhooks time to finish. Alertmanager will not resend an
+      # alert it believes we accepted, so a hard kill mid-request loses it.
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- include "incidentpilot.containerSecurity" . | nindent 12 }}
+          ports: [{containerPort: 8000, name: http}]
+          env: {{- include "incidentpilot.env" . | nindent 12 }}
+          # Liveness checks NOTHING but the process. /healthz deliberately has
+          # no dependencies, so a Valkey blip cannot make Kubernetes kill a
+          # container that is perfectly capable of serving.
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          # Readiness DOES check dependencies: a pod that cannot reach Postgres
+          # should stop receiving traffic without being restarted.
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-worker
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels: {{- include "incidentpilot.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      securityContext: {{- include "incidentpilot.podSecurity" . | nindent 8 }}
+      # Long enough for the consumer to finish the entry it is holding and ACK
+      # it. An un-ACKed entry is recovered by XAUTOCLAIM, so this is a latency
+      # optimisation rather than a correctness one -- but the latency is an
+      # incident's time-to-war-room.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- include "incidentpilot.containerSecurity" . | nindent 12 }}
+          command: ["python", "-m", "incidentpilot.orchestration.consumer"]
+          env:
+            {{- include "incidentpilot.env" . | nindent 12 }}
+            # Distinct consumer names, so the PEL attributes stuck entries to a
+            # specific pod rather than to "the worker group".
+            - name: IP_CONSUMER_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+          # No HTTP probe: this process serves nothing. A liveness probe that
+          # curls a port nothing listens on restart-loops a healthy worker,
+          # which is exactly what the compose stack did until week 8.
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-relay
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+    app.kubernetes.io/component: relay
+spec:
+  replicas: {{ .Values.relay.replicas }}
+  # Recreate, not RollingUpdate. The relay is the only external writer; two of
+  # them briefly overlapping during a rollout is safe (the outbox key makes it
+  # so) but pointless, and "only one process writes externally" is easier to
+  # reason about when it is literally true.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: relay
+  template:
+    metadata:
+      labels: {{- include "incidentpilot.labels" . | nindent 8 }}
+        app.kubernetes.io/component: relay
+    spec:
+      securityContext: {{- include "incidentpilot.podSecurity" . | nindent 8 }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: relay
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- include "incidentpilot.containerSecurity" . | nindent 12 }}
+          command: ["python", "-m", "incidentpilot.orchestration.relay"]
+          env: {{- include "incidentpilot.env" . | nindent 12 }}
+          resources: {{- toYaml .Values.relay.resources | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            # Written while healthy, read by the lifeboat when nothing else is.
+            # The lifeboat's ONLY input, and the reason it can name a human.
+            - {name: state, mountPath: /state}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: state, emptyDir: {}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-scheduler
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicas }}
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: scheduler
+  template:
+    metadata:
+      labels: {{- include "incidentpilot.labels" . | nindent 8 }}
+        app.kubernetes.io/component: scheduler
+    spec:
+      securityContext: {{- include "incidentpilot.podSecurity" . | nindent 8 }}
+      containers:
+        - name: scheduler
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- include "incidentpilot.containerSecurity" . | nindent 12 }}
+          command: ["python", "-m", "incidentpilot.orchestration.scheduler"]
+          env: {{- include "incidentpilot.env" . | nindent 12 }}
+          resources: {{- toYaml .Values.scheduler.resources | nindent 12 }}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+{{- if .Values.dashboard.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "incidentpilot.fullname" . }}-dashboard
+  labels: {{- include "incidentpilot.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dashboard
+spec:
+  replicas: {{ .Values.dashboard.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: dashboard
+  template:
+    metadata:
+      labels: {{- include "incidentpilot.labels" . | nindent 8 }}
+        app.kubernetes.io/component: dashboard
+    spec:
+      securityContext: {{- include "incidentpilot.podSecurity" . | nindent 8 }}
+      containers:
+        - name: dashboard
+          image: "{{ .Values.dashboard.repository }}:{{ .Values.dashboard.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- include "incidentpilot.containerSecurity" . | nindent 12 }}
+          ports: [{containerPort: 3000, name: http}]
+          env:
+            # Server-side only: the dashboard's Server Components call the API
+            # in-cluster, so this address never reaches a browser.
+            - name: IP_API_URL
+              value: http://{{ include "incidentpilot.fullname" . }}-api:8000
+            - name: IP_DEMO_MODE
+              value: {{ .Values.dashboard.demoMode | quote }}
+            - name: HOSTNAME
+              # Next's standalone server otherwise binds the pod hostname, and
+              # the probe below can then never reach it.
+              value: "0.0.0.0"
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+{{- end }}

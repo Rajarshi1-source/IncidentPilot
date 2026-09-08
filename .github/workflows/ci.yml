@@ -329,6 +329,36 @@ jobs:
         env:
           SLACK_SIGNING_SECRET: ci-placeholder
 
+  # The dashboard's own gate. `next build` runs tsc and ESLint, so a type error
+  # fails the build rather than shipping -- which is the point of setting
+  # `typescript.ignoreBuildErrors: false` rather than leaving the default.
+  dashboard:
+    needs: changes
+    if: needs.changes.outputs.dashboard == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          # Node 20 reached end of life in April 2026. Shipping an end-of-life
+          # runtime in a project about operational rigour is the first thing a
+          # reviewer checks.
+          node-version: '24.13.0'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      # `npm ci`, never `npm install`: the lockfile is the contract, and a CI
+      # run that resolves fresh versions is a CI run testing something the
+      # developer never had (B-14).
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run check:no-any
+      - run: npm run lint
+      - run: npm run build
+
   docker:
     needs: changes
     if: needs.changes.outputs.bot == 'true'

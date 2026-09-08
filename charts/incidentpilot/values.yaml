@@ -1,0 +1,94 @@
+# There is deliberately NO secrets.yaml in this chart, and there never will be.
+#
+# A Helm chart that templates Secret objects invites `values-prod.yaml` with
+# real credentials in it, and that file ends up in git within about two weeks.
+# Every secret here is a REFERENCE to a Secret created out of band -- by
+# External Secrets, sealed-secrets, or a human running `kubectl create secret`.
+# The chart names them; it never contains them.
+#
+# `helm template` on this chart with default values produces zero Secret
+# objects. That is asserted by a test rather than promised by this comment.
+
+image:
+  repository: ghcr.io/rajarshi1-source/incidentpilot
+  # Pinned by the release workflow to a digest. `latest` here means the thing
+  # you roll back to is not the thing you rolled forward from.
+  tag: "0.8.0"
+  pullPolicy: IfNotPresent
+
+dashboard:
+  enabled: true
+  repository: ghcr.io/rajarshi1-source/incidentpilot-dashboard
+  tag: "0.8.0"
+  replicas: 2
+  demoMode: true
+
+lifeboat:
+  enabled: true
+  # A SEPARATE image sharing no code with the bot. If it were built FROM the bot
+  # image it would fail for the same reason the bot failed, and it would not be
+  # a lifeboat.
+  repository: ghcr.io/rajarshi1-source/incidentpilot-lifeboat
+  tag: "1.0.0"
+  schedule: "* * * * *"
+
+api:
+  replicas: 3
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+worker:
+  replicas: 2
+  resources:
+    requests: {cpu: 200m, memory: 512Mi}
+    limits: {memory: 1Gi}
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    # Scaled on stream lag, not CPU. A worker blocked on a slow external call
+    # uses no CPU at all, so a CPU-based HPA scales down exactly when the
+    # backlog is growing.
+    targetPendingPerReplica: 100
+
+relay:
+  # ONE replica. The outbox's idempotency keys make a second one safe, but
+  # "safe" and "necessary" are different, and a single external writer is the
+  # simplest thing that satisfies INV-03.
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+scheduler:
+  replicas: 1
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+# Names of Secrets that must already exist in the namespace. The chart reads
+# them; it does not create them.
+existingSecrets:
+  database: incidentpilot-database   # key: url
+  valkey: incidentpilot-valkey       # key: url
+  slack: incidentpilot-slack         # keys: signingSecret, botToken
+  alertmanager: incidentpilot-alertmanager  # key: bearer
+  paging: incidentpilot-paging       # key: webhookSecret
+  lifeboat: incidentpilot-lifeboat   # key: url
+
+config:
+  environment: prod
+  chatProvider: slack
+  metricsProvider: prometheus
+  logLevel: INFO
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+
+networkPolicy:
+  enabled: true
+
+podDisruptionBudget:
+  enabled: true
