@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     llm_budget_usd_per_month: float = 50.0
     require_citations: bool = True  # CI asserts this is True in prod configs
     redact_pii: bool = True
+    # W8-09. See `effective_chat_provider` below for how this is enforced.
     demo_mode: bool = False
 
     # --- correlation (D3) -----------------------------------------------
@@ -126,9 +127,41 @@ class Settings(BaseSettings):
     service_name: str = "incidentpilot-api"
     shutdown_grace_s: int = Field(default=30, ge=1, le=120)
 
+    # --- demo mode (W8-09, §16) ------------------------------------------
+    # The public URL on a résumé is a URL strangers open. DEMO_MODE serves the
+    # whole dashboard from seeded fixtures and makes every outbound path
+    # unreachable: no Slack channel can be created, nobody can be paged, no
+    # model can be called.
+    #
+    # Enforced structurally rather than by a guard at each call site. The
+    # `effective_*` properties below force the adapter factories onto the fakes,
+    # so a write is not *refused* -- there is nothing to refuse it with. A flag
+    # checked in ten places is a flag someone forgets in the eleventh, and the
+    # eleventh is the one that creates a channel in a stranger's workspace.
+    #
+    # The field itself is declared with the other governance settings above.
+
     @property
     def is_dev(self) -> bool:
         return self.environment.lower() in {"dev", "local", "test"}
+
+    @property
+    def is_demo(self) -> bool:
+        return self.demo_mode
+
+    @property
+    def effective_chat_provider(self) -> str:
+        """The chat provider after demo mode has had its say.
+
+        Demo mode wins over configuration on purpose: someone deploying the
+        demo will copy a production env file, and the one setting they must not
+        be able to get wrong is the one that reaches a real workspace.
+        """
+        return "fake" if self.demo_mode else self.chat_provider
+
+    @property
+    def effective_paging_provider(self) -> str:
+        return "fake" if self.demo_mode else self.paging_provider
 
 
 settings = Settings()

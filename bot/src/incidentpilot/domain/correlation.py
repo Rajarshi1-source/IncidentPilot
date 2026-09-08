@@ -225,14 +225,39 @@ def correlate(
         score = 0.0
         why: list[str] = []
 
-        # 1. Temporal proximity to the incident's LAST activity, not its start.
-        #    A cascade still firing four minutes in is still the same incident;
-        #    decaying from t0 would expire the signal exactly when the outer
-        #    ring of a large storm arrives.
-        dt = (alert.starts_at - inc.active_at).total_seconds()
-        if 0 <= dt <= cfg.correlation_window_s:
+        # 1. Temporal proximity to the incident's active SPAN, not to a single
+        #    instant. A cascade still firing four minutes in is still the same
+        #    incident, so the window is measured from the last activity rather
+        #    than from t0 -- decaying from the start would expire the signal
+        #    exactly when the outer ring of a large storm arrives.
+        #
+        #    Distance to the interval, not a forward-only offset. An alert whose
+        #    `starts_at` falls *before* the incident's last activity scored zero
+        #    under the earlier `0 <= dt` guard, and at-least-once delivery
+        #    guarantees that happens: a worker crash between COMMIT and XACK
+        #    makes XAUTOCLAIM redeliver an entry minutes later, by which time the
+        #    incident has absorbed alerts with later timestamps. Week 8's
+        #    end-to-end demo hit it -- one deadlocked alert was reclaimed,
+        #    arrived out of order, failed to correlate on time, and opened a
+        #    **second war room** for the same cascade.
+        #
+        #    An alert 148 seconds before the incident's most recent activity is
+        #    exactly as much a part of that cascade as one 148 seconds after.
+        #    Direction was never the signal; proximity is.
+        if inc.detected_at <= alert.starts_at <= inc.active_at:
+            dt = 0.0
+        else:
+            dt = min(
+                abs((alert.starts_at - inc.active_at).total_seconds()),
+                abs((alert.starts_at - inc.detected_at).total_seconds()),
+            )
+        if dt <= cfg.correlation_window_s:
             score += 0.4 * (1 - dt / cfg.correlation_window_s)
-            why.append(f"{int(dt)}s after last activity")
+            why.append(
+                "within the incident window"
+                if dt == 0.0
+                else f"{int(dt)}s from the incident window"
+            )
 
         # 2. Topological closeness to the NEAREST already-implicated service.
         #    Cascades chain outward: checkout-web is two hops from the failing

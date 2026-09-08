@@ -94,6 +94,8 @@ class RecordingOrchestrator:
 
     def __init__(self, *, fail: bool = False) -> None:
         self.ingested: list[NormalizedAlert] = []
+        self.engaged: list[int] = []
+        self.created = True
         self.fail = fail
 
     async def ingest(self, session: Any, alert: NormalizedAlert) -> IngestOutcome:
@@ -101,11 +103,22 @@ class RecordingOrchestrator:
             raise RuntimeError("database unavailable")
         self.ingested.append(alert)
         return IngestOutcome(
-            incident_id=1, created=True, decision=Decision.new_incident(), was_new_alert=True
+            incident_id=1,
+            created=self.created,
+            decision=Decision.new_incident(),
+            was_new_alert=True,
         )
 
     async def refresh_root_signal(self, session: Any, incident_id: int) -> str | None:
         return "PostgresPrimaryDown"
+
+    async def ensure_engaged(self, session: Any, incident_id: int) -> Any:
+        # Recorded rather than ignored: the consumer must open the war room on a
+        # newly created incident, and `test_a_created_incident_is_engaged`
+        # asserts on this list. A fake that quietly did nothing here is exactly
+        # how the real system sat in `detected` forever.
+        self.engaged.append(incident_id)
+        return None
 
 
 class FakeSessionFactory:
@@ -324,3 +337,39 @@ async def test_telemetry_failure_never_breaks_the_consumer() -> None:
     client = NoPending([_entry(_alert())])
     consumer = AlertConsumer(client, FakeSessionFactory(), RecordingOrchestrator())
     assert await consumer.poll_once() == 1
+
+
+async def test_a_created_incident_is_engaged() -> None:
+    """A new incident must be driven to `engaged`, or no war room is ever opened.
+
+    `create_channel` hangs off the TRIAGING -> ENGAGED transition, so an
+    incident left in `detected` produces no channel, no page and no runbook --
+    silently, because every individual component is working. The running stack
+    did exactly this until week 8's end-to-end demo went through the real
+    webhook: G2 tested `transition` directly, G3 tested the handlers directly,
+    and nothing joined the two.
+    """
+    client = FakeStreamClient([_entry(_alert())])
+    orchestrator = RecordingOrchestrator()
+    consumer = AlertConsumer(client, FakeSessionFactory(), orchestrator)
+
+    await consumer.poll_once()
+
+    assert orchestrator.engaged == [1], "a newly created incident was never engaged"
+
+
+async def test_a_merged_alert_does_not_re_engage() -> None:
+    """An alert merging into an open incident must not re-drive the state machine.
+
+    The war room is already open; re-running the transition would either raise
+    InvalidTransition and strand a healthy entry in the DLQ, or enqueue a second
+    `create_channel`. Only `created` triggers it.
+    """
+    client = FakeStreamClient([_entry(_alert())])
+    orchestrator = RecordingOrchestrator()
+    orchestrator.created = False
+    consumer = AlertConsumer(client, FakeSessionFactory(), orchestrator)
+
+    await consumer.poll_once()
+
+    assert orchestrator.engaged == [], "a merged alert must not re-engage the incident"

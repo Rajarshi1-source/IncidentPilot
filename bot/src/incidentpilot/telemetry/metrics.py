@@ -239,6 +239,27 @@ def set_degradation_level(level: int) -> None:
     DEGRADATION_LEVEL.set(level)
 
 
+def mark_citation_coverage_unmeasured() -> None:
+    """Publish NaN until a PIR has actually been generated.
+
+    The same defect as the transcript ratio below, found the same way and worth
+    fixing the same way. A fresh pod exposes ``ip_pir_citation_coverage 0``,
+    which is indistinguishable to `CitationCoverageBelowOne` from "a published
+    PIR carries an uncited claim" -- the one alert in the file with no burn
+    rate and no averaging window, because grounding is an invariant rather than
+    a target.
+
+    Week 8's end-to-end demo proved it: the stack came up, Prometheus scraped a
+    zero, Alertmanager fired, and IncidentPilot opened an incident **about
+    itself** through its own webhook. Self-monitoring working correctly on a
+    metric that was lying.
+
+    NaN is the Prometheus idiom for "no data": comparisons against it are
+    false, so no rule fires and a graph shows a gap rather than a cliff.
+    """
+    PIR_CITATION_COV.set(float("nan"))
+
+
 def mark_transcript_ratio_unmeasured() -> None:
     """Publish NaN until the reconciler has actually measured something.
 

@@ -24,6 +24,20 @@ COPY src/ ./src/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
+# The schema ships WITH the image, not alongside it (W8-11).
+#
+# Until week 8 this image could not migrate itself: `alembic.ini` and
+# `migrations/` were never copied, so `alembic upgrade head` inside the
+# container failed with "No 'script_location' key found". Nothing caught it,
+# because every gate so far migrated from the host with `uv run alembic`, where
+# both files are simply present.
+#
+# It would have surfaced as a Kubernetes migration Job that cannot run, on the
+# first real deploy, from this same image -- the shape of failure this project
+# keeps finding: correct in isolation, wrong in composition.
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
+
 
 FROM python:3.14.7-slim-trixie AS runtime
 

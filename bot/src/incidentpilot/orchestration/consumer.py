@@ -12,22 +12,46 @@ neither done nor redelivered, and nothing surfaces it.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import os
+import signal
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from sqlalchemy.exc import DBAPIError
+
+from incidentpilot.config.settings import Settings
+from incidentpilot.config.settings import settings as default_settings
 from incidentpilot.domain.normalize import (
     AlertSource,
     AlertStatus,
     NormalizedAlert,
 )
 from incidentpilot.orchestration.orchestrator import IngestOutcome
-from incidentpilot.telemetry.logging import get_logger
+from incidentpilot.runtime import configure_event_loop
+from incidentpilot.telemetry.logging import configure_logging, get_logger
 from incidentpilot.telemetry.metrics import STREAM_PENDING
 
 log = get_logger(__name__)
+
+# Three attempts, then fall through to the Pending Entries List. A deadlock that
+# survives three immediate retries is not the transient kind, and spinning on it
+# would hold the consumer off the rest of the storm.
+DEADLOCK_RETRIES = 3
+DEADLOCK_BACKOFF_S = 0.05
+
+# 40P01 deadlock_detected, 40001 serialization_failure. Matched on SQLSTATE
+# rather than message text, which is localised and changes between versions.
+RETRYABLE_SQLSTATES = frozenset({"40P01", "40001"})
+
+
+def _is_retryable_conflict(exc: BaseException) -> bool:
+    sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
+    return str(sqlstate) in RETRYABLE_SQLSTATES
+
 
 DEFAULT_GROUP = "cg-orchestrate"
 RECLAIM_IDLE_MS = 60_000
@@ -51,6 +75,15 @@ class IngestOrchestrator(Protocol):
     async def ingest(self, session: Any, alert: NormalizedAlert) -> IngestOutcome: ...
 
     async def refresh_root_signal(self, session: Any, incident_id: int) -> str | None: ...
+
+    async def ensure_engaged(self, session: Any, incident_id: int) -> Any:
+        """Drive a freshly detected incident to `engaged`, idempotently.
+
+        On the Protocol rather than only on `Orchestrator` because the consumer
+        calls it on every newly created incident: a fake orchestrator in a test
+        that omitted it would type-check while the real war room never opened.
+        """
+        ...
 
 
 def alert_from_stream(fields: dict[str, str]) -> NormalizedAlert:
@@ -166,21 +199,78 @@ class AlertConsumer:
             log.error("consumer.undecodable_entry", message_id=message_id, error=str(exc))
             return True
 
-        try:
-            async with self._sessions() as session, session.begin():
-                outcome = await self._orchestrator.ingest(session, alert)
-                if outcome.created or outcome.was_new_alert:
-                    await self._orchestrator.refresh_root_signal(session, outcome.incident_id)
-            self._log_outcome(alert, outcome)
-            return True
-        except Exception as exc:
-            log.warning(
-                "consumer.handle_failed",
-                message_id=message_id,
-                alertname=alert.alertname,
-                error=str(exc),
-            )
-            return False  # un-ACKed; XAUTOCLAIM redelivers
+        # A deadlock is transient by definition, and Postgres documents retry as
+        # the correct response. The worker inserts outbox rows while the relay
+        # claims them with FOR UPDATE SKIP LOCKED, and under a storm those two
+        # touch `outbox_events.idempotency_key` in opposite orders often enough
+        # to deadlock roughly once per forty-alert cascade.
+        #
+        # Without this the entry is left un-ACKed and XAUTOCLAIM recovers it --
+        # which works, and was observed working, but costs the reclaim idle
+        # timeout on every storm. Retrying in-process turns a minutes-long
+        # recovery into a millisecond one, and the PEL path stays underneath as
+        # the backstop for everything a retry cannot fix.
+        for attempt in range(1, DEADLOCK_RETRIES + 1):
+            try:
+                return await self._ingest_once(alert)
+            except DBAPIError as exc:
+                if not _is_retryable_conflict(exc) or attempt == DEADLOCK_RETRIES:
+                    log.warning(
+                        "consumer.handle_failed",
+                        message_id=message_id,
+                        alertname=alert.alertname,
+                        error=str(exc),
+                    )
+                    return False
+                # Backoff scaled by attempt rather than randomised: the replay
+                # harness runs this code, and a jittered sleep would make a
+                # recorded incident score differently between runs (INV-10).
+                log.info(
+                    "consumer.deadlock_retry",
+                    message_id=message_id,
+                    alertname=alert.alertname,
+                    attempt=attempt,
+                )
+                await asyncio.sleep(DEADLOCK_BACKOFF_S * attempt)
+            except Exception as exc:
+                log.warning(
+                    "consumer.handle_failed",
+                    message_id=message_id,
+                    alertname=alert.alertname,
+                    error=str(exc),
+                )
+                return False
+        return False
+
+    async def _ingest_once(self, alert: NormalizedAlert) -> bool:
+        """One ingest transaction. Raises; the caller decides about retrying."""
+        async with self._sessions() as session, session.begin():
+            outcome = await self._orchestrator.ingest(session, alert)
+            if outcome.created or outcome.was_new_alert:
+                await self._orchestrator.refresh_root_signal(session, outcome.incident_id)
+            if outcome.created:
+                # Open the war room. `create_channel` hangs off the
+                # TRIAGING -> ENGAGED transition, so without this an incident
+                # sits in `detected` forever and nobody is ever told -- which is
+                # what the running stack actually did until week 8's end-to-end
+                # demo drove it through the real webhook.
+                #
+                # It went unnoticed because the crash matrix (G3) calls the
+                # handlers directly and the state tests (G2) call `transition`
+                # directly: both halves correct, nothing joining them. Same
+                # shape as the un-awaited budget breaker and the schema that
+                # existed as a side effect of another module running first.
+                #
+                # Idempotent by construction: `ensure_engaged` advances only
+                # from DETECTED/TRIAGING and returns without transitioning
+                # otherwise, so an XAUTOCLAIM redelivery cannot raise
+                # InvalidTransition and strand a healthy entry in the DLQ.
+                #
+                # Only on `created`: an alert merging into an existing incident
+                # must not re-drive a state machine that has moved on.
+                await self._orchestrator.ensure_engaged(session, outcome.incident_id)
+        self._log_outcome(alert, outcome)
+        return True
 
     def _log_outcome(self, alert: NormalizedAlert, outcome: IngestOutcome) -> None:
         log.info(
@@ -281,3 +371,71 @@ __all__ = [
 
 def utcnow_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+# --- process entrypoint (W8-11) ----------------------------------------------
+#
+# `python -m incidentpilot.orchestration.consumer`. The compose stack and the
+# Helm chart both run the worker as its own process, and until week 8 this
+# module had no `__main__` -- `run_worker` was reachable only from a test.
+#
+# A separate deployment rather than a thread inside the API, and that is the
+# bulkhead argument again: orchestration is the CPU-bound half (correlation over
+# the service graph, intent classification), ingest is the latency-bound half
+# with a 250 ms p99 to hold. Sharing a process means a storm's correlation work
+# competes with the webhook that is still trying to return 202.
+
+
+async def _run(cfg: Settings | None = None) -> None:
+    cfg = cfg or default_settings
+    configure_event_loop()
+    configure_logging(level=cfg.log_level, json_output=cfg.log_json)
+
+    from redis.asyncio import Redis
+
+    from incidentpilot.config.graph_loader import load_service_graph
+    from incidentpilot.db.engine import build_engine, build_session_factory
+    from incidentpilot.orchestration.orchestrator import Orchestrator
+
+    engine = build_engine(cfg)
+    sessions = build_session_factory(engine)
+    valkey = Redis.from_url(cfg.valkey_url.get_secret_value(), decode_responses=True)
+
+    # `Settings` satisfies the CorrelationConfig Protocol, so the worker and the
+    # API read one definition of merge_threshold rather than two copies that
+    # drift.
+    orchestrator = Orchestrator(load_service_graph(), cfg)
+
+    stopping = asyncio.Event()
+
+    def _stop(*_: object) -> None:
+        log.info("worker.shutdown_requested")
+        stopping.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(ValueError, AttributeError, OSError, NotImplementedError):
+            signal.signal(sig, _stop)
+
+    log.info("worker.started", stream=cfg.stream_alerts_raw)
+    try:
+        await run_worker(
+            valkey,
+            sessions,
+            orchestrator,
+            stream=cfg.stream_alerts_raw,
+            consumer_name=os.environ.get("IP_CONSUMER_NAME", "worker-1"),
+            stop_check=stopping.is_set,
+        )
+    finally:
+        await engine.dispose()
+        with contextlib.suppress(Exception):
+            await valkey.aclose()
+        log.info("worker.stopped")
+
+
+def main() -> None:
+    asyncio.run(_run())
+
+
+if __name__ == "__main__":
+    main()

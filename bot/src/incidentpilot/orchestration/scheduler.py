@@ -56,6 +56,21 @@ NUDGE_AFTER_S = 600
 # Engaged incidents nobody has acknowledged, with no nudge already queued. The
 # idempotency key carries the nudge number, so a five-minute loop produces one
 # nudge per interval rather than one per pass.
+# Incidents that have resolved and have no PIR yet. `resolved` only: an incident
+# already in `pir_drafting` was claimed by a previous pass, and the LEFT JOIN is
+# belt-and-braces against a document written by a path other than this sweep.
+RESOLVED_AWAITING_PIR = text(
+    """
+    SELECT i.id
+      FROM incidents i
+      LEFT JOIN pir_documents p ON p.incident_id = i.id
+     WHERE i.state = 'resolved'
+       AND p.id IS NULL
+     ORDER BY i.resolved_at
+     LIMIT :limit
+    """
+)
+
 STALE_UNACKNOWLEDGED = text(
     """
     SELECT id, public_key, detected_at,
@@ -127,12 +142,115 @@ class Scheduler:
         jobs = [
             Job("sla_nudge", self._cfg.sla_nudge_interval_s, self.nudge_unacknowledged),
             Job("abandonment_sweep", 3600, self.sweep_abandoned),
+            # 20s, not 300s: the SLO is "resolve to draft posted, p95 under 90
+            # seconds", and a sweep interval is part of that budget. Anything
+            # slower spends most of the allowance waiting for the poll.
+            Job("pir_sweep", 20, self.sweep_pir),
         ]
         if self._reconciler is not None:
             jobs.append(Job("reconciler", self._cfg.reconcile_interval_s, self._reconcile))
         return jobs
 
     # -- jobs ------------------------------------------------------------
+
+    async def sweep_pir(self, *, limit: int = 5) -> int:
+        """Generate the PIR for every incident that has resolved (W8-14, D1).
+
+        **This is the job that makes the flagship actually run.** Until week 8
+        `PIRGenerator` was never instantiated anywhere under ``src/``: the
+        generator, the validator, the citation grammar and the fallback ladder
+        were all built and all gate-tested, and nothing in the running system
+        ever called them. G6 passes because ``gate_g6.sh`` constructs the
+        generator itself in an inline script -- it proved the component works,
+        not that the product uses it.
+
+        Third occurrence of that shape in this project, after `ensure_engaged`
+        and the schema that existed as a side effect of another test module:
+        every half correct, the composition missing.
+
+        The state machine is what makes it safe to run on an interval.
+        ``resolved -> pir_drafting`` is a real transition guarded by
+        ``UNIQUE (incident_id, seq)``, so two schedulers racing the same
+        incident cannot both claim it -- the loser's transition raises and its
+        pass simply finds nothing to do. That is why this sweeps for `resolved`
+        rather than keeping a queue of its own.
+
+        A small limit per pass on purpose: PIR generation is the one job here
+        that can take sixty seconds and spend money, and a scheduler that tried
+        to drain a backlog in one pass would hold its other sweeps off for
+        minutes.
+        """
+        drafted = 0
+        async with unit_of_work(self._sessions) as session:
+            rows = (await session.execute(RESOLVED_AWAITING_PIR, {"limit": limit})).mappings().all()
+
+        for row in rows:
+            incident_id = int(row["id"])
+            try:
+                # Claim it first, in its own transaction. If generation then
+                # crashes the incident sits in `pir_drafting` and the
+                # PIR_FAILED branch is what recovers it -- which is a state a
+                # human can see, unlike an incident that silently never got one.
+                async with unit_of_work(self._sessions) as session:
+                    await self._orchestrator().transition(
+                        session, incident_id, S.PIR_DRAFTING, actor="scheduler"
+                    )
+            except Exception as exc:
+                log.info("scheduler.pir_claim_skipped", incident_id=incident_id, error=str(exc))
+                continue
+
+            try:
+                result = await self._generate_pir(incident_id)
+            except Exception as exc:
+                log.error("scheduler.pir_failed", incident_id=incident_id, error=str(exc))
+                async with unit_of_work(self._sessions) as session:
+                    await self._orchestrator().transition(
+                        session, incident_id, S.PIR_FAILED, actor="scheduler", reason=str(exc)[:200]
+                    )
+                continue
+
+            async with unit_of_work(self._sessions) as session:
+                await self._orchestrator().transition(
+                    session,
+                    incident_id,
+                    S.PIR_DRAFTED,
+                    actor="scheduler",
+                    reason=f"{result.layer} coverage={result.coverage}",
+                )
+            drafted += 1
+            log.info(
+                "scheduler.pir_drafted",
+                incident_id=incident_id,
+                layer=result.layer,
+                coverage=result.coverage,
+            )
+        return drafted
+
+    async def _generate_pir(self, incident_id: int) -> Any:
+        """Build the generator and persist exactly one document.
+
+        Constructed per incident rather than held on the scheduler: the router
+        reads `models.yaml` and the budget breaker holds a Valkey handle, and a
+        long-lived generator would pin a configuration that ops expects to be
+        able to change without a restart.
+        """
+        from incidentpilot.adapters.llm.router import LLMRouter, build_providers
+        from incidentpilot.adapters.metrics.factory import build_metrics
+        from incidentpilot.config.models_config import load_models_config
+        from incidentpilot.pir.generator import PIRGenerator, persist
+        from incidentpilot.privacy.redactor import Redactor
+
+        config = load_models_config()
+        # A fresh redactor per incident: sharing one would leak the *fact*
+        # that the same address appears in two incidents (D6).
+        redactor = Redactor(enabled=self._cfg.redact_pii)
+        router = LLMRouter(config, build_providers(config), redactor=redactor)
+        generator = PIRGenerator(router, metrics=build_metrics(self._cfg))
+
+        async with unit_of_work(self._sessions) as session:
+            result = await generator.generate(session, incident_id)
+            await persist(session, result)
+        return result
 
     async def nudge_unacknowledged(self, *, limit: int = 50) -> int:
         """Remind the channel, do not page again.

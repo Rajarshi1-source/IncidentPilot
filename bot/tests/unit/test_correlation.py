@@ -39,6 +39,30 @@ class Cfg:
 GRAPH = load_service_graph()
 
 
+def _make_alert(
+    *,
+    service: str,
+    starts_at: datetime,
+    labels: dict[str, str],
+    alertname: str = "HighErrorRate",
+    severity: str = "critical",
+) -> NormalizedAlert:
+    """One alert, built through the product's own normalizer.
+
+    Constructed from an Alertmanager payload rather than by hand so the
+    fingerprint, severity rank and stable-label filtering are the real ones --
+    a hand-built NormalizedAlert would test the test's idea of an alert.
+    """
+    payload = {
+        "status": "firing",
+        "labels": {"alertname": alertname, "service": service, "severity": severity, **labels},
+        "annotations": {"summary": f"{alertname} on {service}"},
+        "startsAt": starts_at.isoformat().replace("+00:00", "Z"),
+        "endsAt": "0001-01-01T00:00:00Z",
+    }
+    return normalize_alertmanager(payload, {})
+
+
 def _storm(n: int) -> list[NormalizedAlert]:
     payload = json.loads((FIXTURES / f"storm_{n}.json").read_text(encoding="utf-8"))
     return [normalize_alertmanager(a, payload) for a in payload["alerts"]]
@@ -487,3 +511,76 @@ def test_nearest_hop_skips_unreachable_services() -> None:
     assert any("postgres-primary" in reason for reason in decision.reasons), (
         "the reachable candidate must be the one named in the explanation"
     )
+
+
+def test_an_out_of_order_alert_still_correlates() -> None:
+    """At-least-once delivery guarantees alerts arrive out of order.
+
+    A worker crash between COMMIT and XACK makes XAUTOCLAIM redeliver an entry
+    minutes later, by which time the incident has absorbed alerts with *later*
+    timestamps. The earlier forward-only guard (`0 <= dt`) scored that as zero
+    temporal proximity, and week 8's end-to-end demo caught the consequence: one
+    deadlocked alert was reclaimed, failed to correlate, and opened a **second
+    war room for the same cascade**.
+
+    An alert 148 seconds before the incident's most recent activity is exactly
+    as much part of that cascade as one 148 seconds after.
+    """
+    # The checked-in graph, not a hand-built one: this reproduces the exact
+    # shape the demo hit, where `upi-gateway` is one hop from `payments-api`.
+    cfg = Cfg()
+
+    incident = OpenIncident(
+        # Rank 4 = critical. `absorb()` accumulates it with max(), so an
+        # incident that has already taken critical alerts sits at 4 -- and the
+        # severity guard would (correctly) refuse to fold a critical alert into
+        # a less severe incident.
+        id=1,
+        severity_rank=4,
+        detected_at=T0,
+        primary_service="postgres-primary",
+        stable_labels={"cluster": "prod", "namespace": "payments"},
+        affected_services=frozenset({"postgres-primary", "payments-api"}),
+        # The cascade has been running for four minutes.
+        last_alert_at=T0 + timedelta(seconds=240),
+    )
+
+    # Redelivered: its timestamp sits *inside* the incident's span.
+    late = _make_alert(
+        service="upi-gateway",
+        starts_at=T0 + timedelta(seconds=92),
+        labels={"cluster": "prod", "namespace": "payments"},
+    )
+
+    decision = correlate(late, [incident], GRAPH, cfg)
+    assert decision.is_merge, (
+        "an out-of-order alert inside the incident's window must correlate, "
+        "or at-least-once redelivery silently doubles the war rooms"
+    )
+
+
+def test_an_alert_far_outside_the_window_still_opens_its_own_incident() -> None:
+    """The other direction: proximity is not the same as 'anything nearby'.
+
+    Widening the temporal term to a distance rather than a forward offset must
+    not turn it into a term that always fires. An unrelated alert an hour away
+    is still an unrelated alert, and over-correlation hides outages.
+    """
+    cfg = Cfg()
+
+    incident = OpenIncident(
+        id=1,
+        severity_rank=4,
+        detected_at=T0,
+        primary_service="payments-api",
+        stable_labels={"cluster": "prod"},
+        affected_services=frozenset({"payments-api"}),
+        last_alert_at=T0 + timedelta(seconds=60),
+    )
+    distant = _make_alert(
+        service="unrelated-svc",
+        starts_at=T0 + timedelta(hours=1),
+        labels={"cluster": "other"},
+    )
+
+    assert not correlate(distant, [incident], GRAPH, cfg).is_merge

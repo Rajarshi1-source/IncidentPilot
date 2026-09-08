@@ -200,6 +200,25 @@ async def test_poison_row_reaches_dead(
     dropped. A DLQ nobody looks at is the same as dropping."""
     row_id = await _enqueue(sessions, incident_id, "create_channel")
 
+    # Isolate this row from anything else pending.
+    #
+    # `relay_once` claims the OLDEST pending row, so on a database that already
+    # holds work -- after the G8 demo has run, say -- every pass here would
+    # dispatch somebody else's row and this one would never accumulate an
+    # attempt. The test passed for two weeks purely because it ran against a
+    # quiet database, which is the same defect this project keeps writing tests
+    # about: a green signal that is not measuring what it claims.
+    async with sessions() as session, session.begin():
+        await session.execute(
+            text(
+                """
+                UPDATE outbox_events SET status = 'dispatched'
+                 WHERE status = 'pending' AND id <> :keep
+                """
+            ),
+            {"keep": row_id},
+        )
+
     async def always_fails(row: dict[str, Any]) -> dict[str, Any]:
         raise RetryableChatError("still broken")
 

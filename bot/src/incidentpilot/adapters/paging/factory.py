@@ -24,7 +24,7 @@ def build_paging(cfg: Settings) -> Any:
     account. Imports are deferred per branch so a deployment on the static rota
     never needs httpx configured for a provider it does not use.
     """
-    if cfg.paging_provider == "pagerduty":
+    if cfg.effective_paging_provider == "pagerduty":
         from incidentpilot.adapters.paging.pagerduty import PagerDutyPaging
 
         log.info("paging.provider_resolved", provider="pagerduty")
@@ -35,7 +35,7 @@ def build_paging(cfg: Settings) -> Any:
             api_token=cfg.paging_api_token.get_secret_value() if cfg.paging_api_token else None,
         )
 
-    if cfg.paging_provider == "fake":
+    if cfg.effective_paging_provider == "fake":
         from incidentpilot.adapters.paging.fake import FakePaging
 
         log.info("paging.provider_resolved", provider="fake")

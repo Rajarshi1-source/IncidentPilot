@@ -18,6 +18,7 @@ from redis.asyncio import Redis
 
 from incidentpilot import __version__
 from incidentpilot.api import health
+from incidentpilot.api.query import routes as query_routes
 from incidentpilot.api.slash import commands as slash_commands
 from incidentpilot.api.webhooks import alertmanager, deploy, paging, slack
 from incidentpilot.config.assert_invariants import assert_invariants
@@ -33,6 +34,7 @@ from incidentpilot.runbooks.library import build_library
 from incidentpilot.runtime import configure_event_loop
 from incidentpilot.telemetry.logging import configure_logging, get_logger, reset_context
 from incidentpilot.telemetry.metrics import (
+    mark_citation_coverage_unmeasured,
     mark_transcript_ratio_unmeasured,
     set_degradation_level,
 )
@@ -110,6 +112,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not hasattr(app.state, "sessions"):
         app.state.sessions = build_session_factory(build_engine(cfg))
 
+    # Two more pools, and they are the bulkhead in the data layer (W8-02,
+    # §13.6). The dashboard's analytics queries legitimately take seconds; the
+    # incident list must not queue behind them, and neither may starve the
+    # write path the worker uses. Separate pools with separate statement
+    # timeouts is what makes "a slow chart cannot delay a war room" a property
+    # rather than a hope.
+    #
+    # 5s for reads: a read a responder is waiting on has already failed at ten.
+    # 30s for analytics: a ninety-day percentile over real data is not fast, and
+    # nobody is blocked on it.
+    if not hasattr(app.state, "read_sessions"):
+        app.state.read_sessions = build_session_factory(
+            build_engine(cfg, pool_size=5, max_overflow=5, statement_timeout_ms=5_000)
+        )
+    if not hasattr(app.state, "analytics_sessions"):
+        app.state.analytics_sessions = build_session_factory(
+            build_engine(cfg, pool_size=2, max_overflow=2, statement_timeout_ms=30_000)
+        )
+
     # One degradation manager per process (W7-17, INV-12). The level is a
     # property of the process, and two managers with two opinions would fight
     # over a single Prometheus gauge.
@@ -155,6 +176,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _install_shutdown_handler(app)
     set_degradation_level(0)
     mark_transcript_ratio_unmeasured()
+    # Same reason, and the one the week-8 demo caught: a fresh pod exposing
+    # coverage 0.0 makes CitationCoverageBelowOne fire on a system that has
+    # simply not written a PIR yet.
+    mark_citation_coverage_unmeasured()
 
     log.info(
         "startup.complete",
@@ -247,6 +272,7 @@ def create_app(
     app.include_router(slack.router)
     app.include_router(slash_commands.router)
     app.include_router(deploy.router)
+    app.include_router(query_routes.router)
 
     return app
 

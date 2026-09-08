@@ -28,7 +28,7 @@ def build_chat(cfg: Settings, *, valkey: Any = None) -> Any:
     fake adapter should not need `slack_sdk` installed, and the fake path is the
     one an interviewer exercises on a clean clone.
     """
-    if cfg.chat_provider == "slack":
+    if cfg.effective_chat_provider == "slack":
         from slack_sdk.web.async_client import AsyncWebClient
 
         from incidentpilot.adapters.chat.ratelimit import SlackRateLimiter
@@ -57,7 +57,7 @@ def build_history(cfg: Settings) -> Any:
     whole point (INV-02): the object the relay holds has no ``fetch_history`` to
     call, and the object that does is built somewhere the hot path never looks.
     """
-    if cfg.chat_provider == "slack":
+    if cfg.effective_chat_provider == "slack":
         from slack_sdk.web.async_client import AsyncWebClient
 
         from incidentpilot.adapters.chat.history import SlackHistory

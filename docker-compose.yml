@@ -41,6 +41,37 @@ x-bot-env: &bot-env
   IP_LOG_JSON: "true"
 
 services:
+  # Migrations as their own one-shot service, not as an API entrypoint step
+  # (W8-11). Three reasons, and the third is the one that matters:
+  #
+  #  - the API runs two uvicorn workers, so an entrypoint migration races
+  #    itself on every start;
+  #  - a migration failure should stop the stack, not restart-loop a container
+  #    that reports unhealthy for an unrelated-looking reason;
+  #  - `service_completed_successfully` below makes "the schema is ready" an
+  #    explicit edge in the dependency graph rather than a timing assumption.
+  #
+  # This is the same defect the integration suite had in week 7 -- a schema that
+  # existed as a side effect of something else having run first.
+  migrate:
+    build:
+      context: ./bot
+      target: runtime
+    environment: *bot-env
+    # Schema THEN reference data, in that order, in one place. `services` must
+    # be populated before anything ingests: correlation's topology signal reads
+    # `services.graph_depth`, and on a clean clone an empty table turns a
+    # 40-alert cascade into 36 incidents -- D3 silently absent on exactly the
+    # scenario G8 tests. The reference tables come first for the same reason
+    # migration 0001 creates them first (C-09).
+    entrypoint:
+      - sh
+      - -c
+      - alembic upgrade head && python -m incidentpilot.config.sync_reference
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
   api:
     build:
       context: ./bot
@@ -50,12 +81,64 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       valkey: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/healthz || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 6
       start_period: 15s
+    restart: unless-stopped
+
+  # The orchestration half. A separate process from the API because the two are
+  # bound by different things: ingest is latency-bound with a 250 ms p99 to
+  # hold, orchestration is CPU-bound on correlation and intent classification.
+  # Sharing a process means a forty-alert storm competes with the webhook still
+  # trying to return 202 -- the bulkhead, at the process level.
+  worker:
+    build:
+      context: ./bot
+      target: runtime
+    environment:
+      <<: *bot-env
+      IP_CONSUMER_NAME: worker-1
+    entrypoint: ["python", "-m", "incidentpilot.orchestration.consumer"]
+    depends_on:
+      valkey: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  # The ONLY process permitted to perform an external write (INV-03). One
+  # replica, deliberately: the outbox's idempotency keys make a second one safe,
+  # but "safe" and "necessary" are different, and a single writer is the
+  # simplest thing that satisfies the invariant.
+  relay:
+    build:
+      context: ./bot
+      target: runtime
+    environment: *bot-env
+    entrypoint: ["python", "-m", "incidentpilot.orchestration.relay"]
+    depends_on:
+      valkey: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  # The periodic sweeps: SLA nudges, abandonment, reconciliation, and the PIR.
+  #
+  # PIR generation lives here rather than in the worker because it is the one
+  # job that can take sixty seconds and spend money -- putting it on the ingest
+  # consumer would let a slow model call block a storm. The state machine makes
+  # the polling safe: `resolved -> pir_drafting` is guarded by
+  # UNIQUE (incident_id, seq), so two schedulers cannot both claim an incident.
+  scheduler:
+    build:
+      context: ./bot
+      target: runtime
+    environment: *bot-env
+    entrypoint: ["python", "-m", "incidentpilot.orchestration.scheduler"]
+    depends_on:
+      valkey: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     restart: unless-stopped
 
   postgres:

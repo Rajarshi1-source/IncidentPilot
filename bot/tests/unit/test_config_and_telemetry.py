@@ -219,3 +219,29 @@ def test_transcript_ratio_starts_unmeasured_not_zero() -> None:
     value = TRANSCRIPT_RATIO._value.get()
     assert math.isnan(value)
     assert not (value < 0.9999), "a NaN must not satisfy an alert-rule comparison"
+
+
+def test_citation_coverage_starts_unmeasured() -> None:
+    """A fresh pod must not look like a grounding violation.
+
+    `CitationCoverageBelowOne` is the one alert rule with no burn rate and no
+    averaging window -- grounding is an invariant, not a target, so one minute
+    below 1.0 pages. A Gauge reads 0 from definition, and 0 here is
+    indistinguishable from "a published PIR carries an uncited claim".
+
+    Week 8's demo proved it end to end: the stack came up, Prometheus scraped
+    the zero, Alertmanager fired, and IncidentPilot opened an incident about
+    itself through its own webhook. The self-monitoring was working; the metric
+    was lying.
+    """
+    import math
+
+    from incidentpilot.telemetry.metrics import (
+        PIR_CITATION_COV,
+        mark_citation_coverage_unmeasured,
+    )
+
+    mark_citation_coverage_unmeasured()
+    value = PIR_CITATION_COV._value.get()
+    assert math.isnan(value)
+    assert not (value < 1), "a NaN must not satisfy the CitationCoverageBelowOne comparison"
