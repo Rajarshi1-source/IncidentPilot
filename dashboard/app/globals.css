@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* Dark mode by class as well as by preference: this is an operations tool and
+   it gets looked at during night incidents, so the choice belongs to the
+   reader, not only to the OS. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light dark;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+}
+
+/* Respect a reader who has asked for less motion. The live timer is the only
+   thing on this dashboard that moves, and during an incident a moving thing is
+   a distraction if it is not information. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "incidentpilot-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "check:no-any": "node scripts-check-no-any.mjs",
+    "verify": "npm run typecheck && npm run check:no-any && npm run lint"
+  },
+  "dependencies": {
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "recharts": "3.10.1",
+    "zod": "4.5.4",
+    "clsx": "2.1.1",
+    "tailwind-merge": "3.6.0",
+    "class-variance-authority": "0.7.1",
+    "@radix-ui/react-slot": "1.3.3",
+    "@radix-ui/react-popover": "1.1.23"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "26.5.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "tailwindcss": "4.3.3",
+    "@tailwindcss/postcss": "4.3.3",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.4"
+  }
+}

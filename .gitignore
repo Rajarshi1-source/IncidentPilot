@@ -27,3 +27,10 @@ out/
 # stale the first time the corpus moved and then be read as if it had not.
 eval-report.md
 eval-metrics.json
+
+# Next.js (dashboard)
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/next-env.d.ts
+*.tsbuildinfo

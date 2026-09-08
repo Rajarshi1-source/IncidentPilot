@@ -20,6 +20,8 @@ name: incidentpilot
 #
 # Override any of them without editing this file:
 #   IP_PORT_API=9000 docker compose up
+#
+# 3000 is taken by another capstone, so the dashboard publishes on 13000.
 
 x-bot-env: &bot-env
   IP_ENVIRONMENT: local
@@ -68,6 +70,7 @@ services:
       - sh
       - -c
       - alembic upgrade head && python -m incidentpilot.config.sync_reference
+    healthcheck: {disable: true}
     depends_on:
       postgres: {condition: service_healthy}
     restart: "no"
@@ -103,6 +106,12 @@ services:
       <<: *bot-env
       IP_CONSUMER_NAME: worker-1
     entrypoint: ["python", "-m", "incidentpilot.orchestration.consumer"]
+    # The image's HEALTHCHECK curls :8000/healthz, which only the API serves.
+    # Inherited unchanged, these background processes report `unhealthy`
+    # forever: `docker compose ps` lies, and a Kubernetes liveness probe built
+    # the same way would restart-loop a perfectly healthy worker. A process with
+    # no HTTP surface is supervised by whether it is running.
+    healthcheck: {disable: true}
     depends_on:
       valkey: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
@@ -118,6 +127,12 @@ services:
       target: runtime
     environment: *bot-env
     entrypoint: ["python", "-m", "incidentpilot.orchestration.relay"]
+    # The image's HEALTHCHECK curls :8000/healthz, which only the API serves.
+    # Inherited unchanged, these background processes report `unhealthy`
+    # forever: `docker compose ps` lies, and a Kubernetes liveness probe built
+    # the same way would restart-loop a perfectly healthy worker. A process with
+    # no HTTP surface is supervised by whether it is running.
+    healthcheck: {disable: true}
     depends_on:
       valkey: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
@@ -136,9 +151,34 @@ services:
       target: runtime
     environment: *bot-env
     entrypoint: ["python", "-m", "incidentpilot.orchestration.scheduler"]
+    # The image's HEALTHCHECK curls :8000/healthz, which only the API serves.
+    # Inherited unchanged, these background processes report `unhealthy`
+    # forever: `docker compose ps` lies, and a Kubernetes liveness probe built
+    # the same way would restart-loop a perfectly healthy worker. A process with
+    # no HTTP surface is supervised by whether it is running.
+    healthcheck: {disable: true}
     depends_on:
       valkey: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  # The dashboard (W8-03). DEMO_MODE on by default in compose: this is the
+  # thing a stranger opens after `docker compose up`, and the one setting they
+  # must not be able to get wrong is the one that could reach a real workspace.
+  dashboard:
+    build:
+      context: ./dashboard
+      target: runtime
+    environment:
+      # Server-side only. The dashboard's Server Components call the API from
+      # inside the compose network; nothing here is exposed to the browser,
+      # which is why the API URL is a container address rather than a published
+      # port.
+      IP_API_URL: http://api:8000
+      IP_DEMO_MODE: ${DEMO_MODE:-true}
+    ports: ["${IP_PORT_DASHBOARD:-13000}:3000"]
+    depends_on:
+      api: {condition: service_healthy}
     restart: unless-stopped
 
   postgres:
