@@ -6,11 +6,23 @@
 #
 # Nothing here is a credential. If something ever is, the fix is to rotate it
 # and rewrite history -- not to add a line to this file.
+#
+# Reasons never quote the flagged value. The first draft of this file explained
+# the entry below by reproducing the string, and since that comment is itself a
+# commit, the history scan flagged this file at line 10. An ignore file that
+# reintroduces what it exempts is not a joke worth keeping.
 
-# The first commit's HMAC test input, `SECRET = "s3cr3t-signing-key"`. A string
-# invented for test_security.py to sign a body with; it was never a key to
-# anything. Renamed in a later commit to `not-a-real-secret-hmac-test-input`
-# with an inline `gitleaks:allow`, which is why the working tree is clean and
-# only history still carries it. Rewriting seventeen commits of public history
-# to erase a fake string would be theatre.
+# bot/tests/unit/test_security.py in the first commit: a module-level constant
+# holding an invented input for the HMAC signing tests. It was never a key to
+# anything. A later commit renamed it to something self-describing and added an
+# inline `gitleaks:allow`, which is why the working tree is clean and only
+# history still carries the original. Rewriting seventeen commits of public
+# history to erase a made-up string would be theatre.
 654c619df71e733e6eb641e24d7b16de899c8bff:bot/tests/unit/test_security.py:generic-api-key:23
+
+# This file's own first draft, in the commit that introduced it. The comment
+# above explains what went in here; this is the entry that pays for it. It
+# stays rather than being rewritten away, for the reason the entry above gives:
+# the value is invented, and force-pushing a public branch to tidy a comment is
+# a worse trade than one honest extra line.
+5fe74e602348e4778627098d7c8676139cc81313:.gitleaksignore:generic-api-key:10
