@@ -424,7 +424,7 @@ jobs:
 
       # Pinned, because `@master` is a moving dependency that can turn a green
       # build red without a commit in this repository.
-      - uses: aquasecurity/trivy-action@0.33.1
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           severity: 'CRITICAL,HIGH'
