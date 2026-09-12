@@ -157,6 +157,14 @@ wrong.**
   pod tripped `CitationCoverageBelowOne` and IncidentPilot opened an incident
   *about itself* through its own webhook. Self-monitoring working correctly on a
   metric that was lying.
+- **The secret scanner was scanning the diff, not the repository.** On a push,
+  gitleaks-action scans `<before>^..<after>`, so seven weeks of green meant "these
+  commits leaked nothing" and never "this repository contains no secret" — and
+  the first commit was never scanned at all. It only turned red when a depth-1
+  checkout made `<before>^` unresolvable; the run that finally failed is the run
+  that scanned zero bytes. A full-history scan then found exactly one thing, in
+  that unscanned first commit. Same shape as the path filter that never fired:
+  a gate covering something narrower than you believe it covers.
 - **TimescaleDB was justified with arithmetic that was wrong twice.**
   [docs/SCALING_DECISION.md](docs/SCALING_DECISION.md) records both corrections
   and states the trigger for reversing the decision. Volunteering the *second*
@@ -211,7 +219,7 @@ docs/           ADRs, the FMEA, the SLOs, the scaling decision
 - [ADR 0006](docs/ADR/0006-replay-and-the-eval-gate.md) — what replay **cannot**
   measure, and why the gate says so instead of pretending
 - [docs/SLO.md](docs/SLO.md) — eight SLIs, written before the code that measures them
-- [docs/FMEA.md](docs/FMEA.md) — 18 failure modes, each with its residual risk
+- [docs/FMEA.md](docs/FMEA.md) — 20 failure modes, each with its residual risk
 
 ---
 

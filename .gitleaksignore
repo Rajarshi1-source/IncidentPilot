@@ -1,0 +1,16 @@
+# Fingerprints gitleaks must not report, one per line, each with its reason.
+#
+# These are COMMIT-SCOPED fingerprints, never path globs. `tests/**` as a rule
+# would silence a real key committed to a test file next year; a fingerprint
+# silences exactly one line of one file in one commit and nothing else.
+#
+# Nothing here is a credential. If something ever is, the fix is to rotate it
+# and rewrite history -- not to add a line to this file.
+
+# The first commit's HMAC test input, `SECRET = "s3cr3t-signing-key"`. A string
+# invented for test_security.py to sign a body with; it was never a key to
+# anything. Renamed in a later commit to `not-a-real-secret-hmac-test-input`
+# with an inline `gitleaks:allow`, which is why the working tree is clean and
+# only history still carries it. Rewriting seventeen commits of public history
+# to erase a fake string would be theatre.
+654c619df71e733e6eb641e24d7b16de899c8bff:bot/tests/unit/test_security.py:generic-api-key:23

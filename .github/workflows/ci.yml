@@ -383,14 +383,48 @@ jobs:
           [ "$uid" = "10001" ] || { echo "::error::container runs as uid $uid, expected 10001"; exit 1; }
           echo "runs as uid 10001"
 
+  # Rev 1 used gitleaks-action@v2 on a default (depth-1) checkout. Two problems,
+  # and only the second one ever turned the build red:
+  #
+  #   1. On a push the action scans `<before>^..<after>` -- a DIFF, not the
+  #      repository. Seven weeks of green meant "these commits leaked nothing",
+  #      never "this repository contains no secret". The first commit was never
+  #      scanned by CI at all. Same shape as B-11 above: a gate you believe
+  #      covers one thing while it covers another.
+  #   2. `<before>^` does not exist in a depth-1 clone, so git errored, gitleaks
+  #      logged `scanned ~0 bytes` -- and the action exited 1 anyway. The run
+  #      that finally went red is the run that scanned nothing.
+  #
+  # So: fetch the whole history and drive the pinned binary over every commit.
+  # A secret is a secret whether or not this particular push happened to touch
+  # it.
   security:
     runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.30.1"
     steps:
       - uses: actions/checkout@v5
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: aquasecurity/trivy-action@master
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      # History, not the working tree. Every byte in the checkout arrived as an
+      # added line in some patch, so the history scan is a superset of a tree
+      # scan -- and `gitleaks dir` additionally walks .venv/ and .next/, which
+      # is 178 MB of third-party code and build output that says nothing about
+      # this repository. Exemptions live in .gitleaksignore as commit-scoped
+      # fingerprints, so no path is ever blanket-silenced.
+      - name: Secrets anywhere in history
+        run: gitleaks git . --redact --verbose --exit-code 1
+
+      # Pinned, because `@master` is a moving dependency that can turn a green
+      # build red without a commit in this repository.
+      - uses: aquasecurity/trivy-action@0.33.1
         with:
           scan-type: fs
           severity: 'CRITICAL,HIGH'
